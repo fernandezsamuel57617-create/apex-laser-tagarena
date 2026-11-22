@@ -1,0 +1,10 @@
+{
+  "name": "Apex Laser Tag Arena",
+  "description": "Massive multiplayer 3D first-person laser tag with character selection, external lobby obby, real-time WebRTC friends voice chat, and persistent global leaderboard.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

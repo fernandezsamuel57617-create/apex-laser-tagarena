@@ -1,0 +1,182 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Chakra Petch', sans-serif;
+    --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    height: 100dvh;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+    font-family: var(--font-sans);
+    background-color: #080c14;
+    color: #f8fafc;
+  }
+}
+
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+.pt-safe {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+
+.touch-control {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono-tab {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes ffLogoSlam {
+  0% {
+    opacity: 0;
+    transform: scale(1.72) translateY(14px);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(0.95) translateY(-2px);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.03) translateY(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes ffShockwave {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.38);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.15);
+  }
+}
+
+@keyframes ffLightSweep {
+  0% {
+    opacity: 0;
+    transform: translateX(-140%) skewX(-24deg);
+  }
+  25% {
+    opacity: 0.7;
+  }
+  75% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(180%) skewX(-24deg);
+  }
+}
+
+@keyframes ffSparkRise {
+  0% {
+    opacity: 0;
+    transform: translateY(24px) scale(0.5);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-10px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-90px) scale(0.4);
+  }
+}
+
+@keyframes ffFadeUp {
+  0% {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-ff-slam {
+  animation: ffLogoSlam 0.78s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-ff-shockwave-cyan {
+  animation: ffShockwave 1.15s cubic-bezier(0.16, 1, 0.3, 1) 0.18s forwards;
+}
+
+.animate-ff-shockwave-amber {
+  animation: ffShockwave 1.3s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards;
+}
+
+.animate-ff-sweep {
+  animation: ffLightSweep 1.1s ease-in-out 0.65s forwards;
+}
+
+.animate-ff-fadeup {
+  animation: ffFadeUp 0.55s ease-out 0.45s both;
+}
+
+@keyframes damageFloatPop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -45%) scale(0.72);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -85%) scale(1.12);
+  }
+  45% {
+    opacity: 1;
+    transform: translate(-50%, -115%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -165%) scale(0.92);
+  }
+}
+
+.animate-damage-float {
+  animation: damageFloatPop 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-ff-slam,
+  .animate-ff-shockwave-cyan,
+  .animate-ff-shockwave-amber,
+  .animate-ff-sweep,
+  .animate-ff-fadeup,
+  .animate-damage-float {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

@@ -1,0 +1,575 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidOutfitId(outfitId) {
+      return outfitId is string
+        && outfitId.size() >= 1
+        && outfitId.size() <= 32
+        && outfitId in [
+          'default',
+          'cyber_crimson',
+          'neon_phantom',
+          'arctic_stealth',
+          'emerald_viper',
+          'volcanic_titan',
+          'solar_gold',
+          'cyber_samurai',
+          'obsidian_royale',
+          'celestial_nova'
+        ];
+    }
+
+    function isValidOwnedOutfits(list) {
+      return list is list
+        && list.size() >= 1
+        && list.size() <= 10
+        && list[0] is string
+        && list.hasOnly([
+          'default',
+          'cyber_crimson',
+          'neon_phantom',
+          'arctic_stealth',
+          'emerald_viper',
+          'volcanic_titan',
+          'solar_gold',
+          'cyber_samurai',
+          'obsidian_royale',
+          'celestial_nova'
+        ]);
+    }
+
+    function isValidOutfitLevels(levels) {
+      return levels is map
+        && levels.keys().hasOnly([
+          'default',
+          'cyber_crimson',
+          'neon_phantom',
+          'arctic_stealth',
+          'emerald_viper',
+          'volcanic_titan',
+          'solar_gold',
+          'cyber_samurai',
+          'obsidian_royale',
+          'celestial_nova'
+        ])
+        && (!('default' in levels) || (levels.default is int && levels.default >= 1 && levels.default <= 4))
+        && (!('cyber_crimson' in levels) || (levels.cyber_crimson is int && levels.cyber_crimson >= 1 && levels.cyber_crimson <= 4))
+        && (!('neon_phantom' in levels) || (levels.neon_phantom is int && levels.neon_phantom >= 1 && levels.neon_phantom <= 4))
+        && (!('arctic_stealth' in levels) || (levels.arctic_stealth is int && levels.arctic_stealth >= 1 && levels.arctic_stealth <= 4))
+        && (!('emerald_viper' in levels) || (levels.emerald_viper is int && levels.emerald_viper >= 1 && levels.emerald_viper <= 4))
+        && (!('volcanic_titan' in levels) || (levels.volcanic_titan is int && levels.volcanic_titan >= 1 && levels.volcanic_titan <= 4))
+        && (!('solar_gold' in levels) || (levels.solar_gold is int && levels.solar_gold >= 1 && levels.solar_gold <= 4))
+        && (!('cyber_samurai' in levels) || (levels.cyber_samurai is int && levels.cyber_samurai >= 1 && levels.cyber_samurai <= 4))
+        && (!('obsidian_royale' in levels) || (levels.obsidian_royale is int && levels.obsidian_royale >= 1 && levels.obsidian_royale <= 4))
+        && (!('celestial_nova' in levels) || (levels.celestial_nova is int && levels.celestial_nova >= 1 && levels.celestial_nova <= 4));
+    }
+
+    function isValidPrimaryWeaponId(weaponId) {
+      return weaponId is string
+        && weaponId.size() >= 1
+        && weaponId.size() <= 32
+        && weaponId in [
+          'pulse_carbine',
+          'twin_smg',
+          'burst_rifle',
+          'scatter_shotgun',
+          'heavy_lmg',
+          'rail_sniper',
+          'plasma_cannon'
+        ];
+    }
+
+    function isValidSidearmWeaponId(weaponId) {
+      return weaponId is string
+        && weaponId.size() >= 1
+        && weaponId.size() <= 32
+        && weaponId in [
+          'tactical_pistol',
+          'burst_pistol',
+          'magnum_revolver',
+          'stinger_pistol'
+        ];
+    }
+
+    function isValidOwnedWeapons(list) {
+      return list is list
+        && list.size() >= 1
+        && list.size() <= 11
+        && list[0] is string
+        && list.hasOnly([
+          'pulse_carbine',
+          'twin_smg',
+          'burst_rifle',
+          'scatter_shotgun',
+          'heavy_lmg',
+          'rail_sniper',
+          'plasma_cannon',
+          'tactical_pistol',
+          'burst_pistol',
+          'magnum_revolver',
+          'stinger_pistol'
+        ]);
+    }
+
+    function isValidKnifeId(knifeId) {
+      return knifeId is string
+        && knifeId.size() >= 1
+        && knifeId.size() <= 32
+        && knifeId in [
+          'tactical_blade',
+          'karambit_neon',
+          'katana_edge',
+          'cyber_butterfly',
+          'plasma_dagger'
+        ];
+    }
+
+    function isValidOwnedKnives(list) {
+      return list is list
+        && list.size() >= 1
+        && list.size() <= 5
+        && list[0] is string
+        && list.hasOnly([
+          'tactical_blade',
+          'karambit_neon',
+          'katana_edge',
+          'cyber_butterfly',
+          'plasma_dagger'
+        ]);
+    }
+
+    function isValidWeaponSkinId(skinId) {
+      return skinId is string
+        && skinId.size() >= 1
+        && skinId.size() <= 32
+        && skinId in [
+          'default',
+          'plasma_cobalt',
+          'solar_ember',
+          'emerald_helix',
+          'crimson_striker',
+          'void_prism'
+        ];
+    }
+
+    function isValidOwnedWeaponSkins(list) {
+      return list is list
+        && list.size() >= 1
+        && list.size() <= 6
+        && list[0] is string
+        && list.hasOnly([
+          'default',
+          'plasma_cobalt',
+          'solar_ember',
+          'emerald_helix',
+          'crimson_striker',
+          'void_prism'
+        ]);
+    }
+
+    function isValidDailyClaimedIds(list) {
+      return list is list
+        && list.size() <= 4
+        && (list.size() == 0 || (list[0] is string && list.hasOnly(['elim_5', 'win_2', 'play_3', 'streak_3'])));
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'playerName', 'gender', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid',
+          'playerName',
+          'gender',
+          'country',
+          'coins',
+          'rankedWins',
+          'ownedOutfits',
+          'equippedOutfit',
+          'outfitLevels',
+          'ownedWeapons',
+          'equippedWeapon',
+          'equippedSidearm',
+          'ownedKnives',
+          'equippedKnife',
+          'ownedWeaponSkins',
+          'equippedWeaponSkin',
+          'onlineStatus',
+          'currentRoomCode',
+          'dailyMissionsDate',
+          'dailyElims',
+          'dailyWins',
+          'dailyMatches',
+          'dailyBestStreak',
+          'dailyClaimedIds',
+          'lastSeenAt',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.playerName is string
+        && data.playerName.size() >= 1
+        && data.playerName.size() <= 18
+        && data.gender is string
+        && (data.gender == 'male' || data.gender == 'female')
+        && (!('country' in data) || (data.country is string && data.country.size() == 2 && data.country.matches('^[A-Z]{2}$')))
+        && (!('coins' in data) || (data.coins is int && data.coins >= 0 && data.coins <= 1000000))
+        && (!('rankedWins' in data) || (data.rankedWins is int && data.rankedWins >= 0 && data.rankedWins <= 10000))
+        && (!('ownedOutfits' in data) || isValidOwnedOutfits(data.ownedOutfits))
+        && (!('equippedOutfit' in data) || isValidOutfitId(data.equippedOutfit))
+        && (!('outfitLevels' in data) || isValidOutfitLevels(data.outfitLevels))
+        && (!('ownedWeapons' in data) || isValidOwnedWeapons(data.ownedWeapons))
+        && (!('equippedWeapon' in data) || isValidPrimaryWeaponId(data.equippedWeapon))
+        && (!('equippedSidearm' in data) || isValidSidearmWeaponId(data.equippedSidearm))
+        && (!('ownedKnives' in data) || isValidOwnedKnives(data.ownedKnives))
+        && (!('equippedKnife' in data) || isValidKnifeId(data.equippedKnife))
+        && (!('ownedWeaponSkins' in data) || isValidOwnedWeaponSkins(data.ownedWeaponSkins))
+        && (!('equippedWeaponSkin' in data) || isValidWeaponSkinId(data.equippedWeaponSkin))
+        && (!('onlineStatus' in data) || (data.onlineStatus is string && data.onlineStatus.size() >= 1 && data.onlineStatus.size() <= 16 && data.onlineStatus in ['online', 'in_match', 'offline']))
+        && (!('currentRoomCode' in data) || (data.currentRoomCode is string && data.currentRoomCode.size() >= 1 && data.currentRoomCode.size() <= 16 && data.currentRoomCode.matches('^[A-Z0-9]{1,16}$')))
+        && (!('dailyMissionsDate' in data) || (data.dailyMissionsDate is string && data.dailyMissionsDate.size() == 10 && data.dailyMissionsDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')))
+        && (!('dailyElims' in data) || (data.dailyElims is int && data.dailyElims >= 0 && data.dailyElims <= 500))
+        && (!('dailyWins' in data) || (data.dailyWins is int && data.dailyWins >= 0 && data.dailyWins <= 100))
+        && (!('dailyMatches' in data) || (data.dailyMatches is int && data.dailyMatches >= 0 && data.dailyMatches <= 200))
+        && (!('dailyBestStreak' in data) || (data.dailyBestStreak is int && data.dailyBestStreak >= 0 && data.dailyBestStreak <= 100))
+        && (!('dailyClaimedIds' in data) || isValidDailyClaimedIds(data.dailyClaimedIds))
+        && (!('lastSeenAt' in data) || data.lastSeenAt is timestamp)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRoomInvite(data) {
+      return data.keys().hasAll(['fromUid', 'fromName', 'toUid', 'toName', 'roomCode', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'fromUid',
+          'fromName',
+          'fromCountry',
+          'toUid',
+          'toName',
+          'roomCode',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.fromUid)
+        && isValidId(data.toUid)
+        && data.fromUid != data.toUid
+        && data.fromName is string
+        && data.fromName.size() >= 1
+        && data.fromName.size() <= 18
+        && data.toName is string
+        && data.toName.size() >= 1
+        && data.toName.size() <= 18
+        && (!('fromCountry' in data) || (data.fromCountry is string && data.fromCountry.size() == 2 && data.fromCountry.matches('^[A-Z]{2}$')))
+        && data.roomCode is string
+        && data.roomCode.size() >= 4
+        && data.roomCode.size() <= 10
+        && data.roomCode.matches('^[A-Z0-9]{4,10}$')
+        && data.status is string
+        && data.status.size() >= 1
+        && data.status.size() <= 16
+        && data.status in ['pending', 'accepted', 'declined']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /userProfiles/{userId} {
+      // Zero PII stored in userProfiles; verified players can view friends & online status
+      allow get: if isValidId(userId) && isVerifiedUser();
+      allow list: if isVerifiedUser()
+        && existing().uid is string
+        && existing().playerName is string;
+
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && (!('coins' in incoming()) || (incoming().coins >= 0 && incoming().coins <= 250))
+        && (!('rankedWins' in incoming()) || incoming().rankedWins == 0)
+        && (!('equippedOutfit' in incoming()) || (('ownedOutfits' in incoming()) && incoming().equippedOutfit in incoming().ownedOutfits))
+        && (!('equippedWeapon' in incoming()) || (('ownedWeapons' in incoming()) && incoming().equippedWeapon in incoming().ownedWeapons))
+        && (!('equippedSidearm' in incoming()) || (('ownedWeapons' in incoming()) && incoming().equippedSidearm in incoming().ownedWeapons))
+        && (!('equippedKnife' in incoming()) || (('ownedKnives' in incoming()) && incoming().equippedKnife in incoming().ownedKnives))
+        && (!('equippedWeaponSkin' in incoming()) || (('ownedWeaponSkins' in incoming()) && incoming().equippedWeaponSkin in incoming().ownedWeaponSkins))
+        && (!('lastSeenAt' in incoming()) || incoming().lastSeenAt == request.time)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && (
+          (('createdAt' in existing()) && incoming().createdAt == existing().createdAt)
+          || (!('createdAt' in existing()) && incoming().createdAt == request.time)
+        )
+        && incoming().updatedAt == request.time
+        && (
+          // Action 0: Repair / backfill legacy profile missing required schema fields without inflating balances
+          (
+            (!('createdAt' in existing()) || !('ownedOutfits' in existing()) || !('ownedWeapons' in existing()) || !('ownedWeaponSkins' in existing()) || !('outfitLevels' in existing()) || !('ownedKnives' in existing()) || !('equippedSidearm' in existing()))
+            && incoming().diff(existing()).affectedKeys().hasOnly(['playerName', 'gender', 'country', 'coins', 'rankedWins', 'ownedOutfits', 'equippedOutfit', 'outfitLevels', 'ownedWeapons', 'equippedWeapon', 'equippedSidearm', 'ownedKnives', 'equippedKnife', 'ownedWeaponSkins', 'equippedWeaponSkin', 'createdAt', 'updatedAt'])
+            && ((!('coins' in existing()) && incoming().coins == 0) || (('coins' in existing()) && incoming().coins == existing().coins))
+            && ((!('rankedWins' in existing()) && (!('rankedWins' in incoming()) || incoming().rankedWins == 0)) || (('rankedWins' in existing()) && incoming().rankedWins == existing().rankedWins))
+            && (!('equippedOutfit' in incoming()) || (('ownedOutfits' in incoming()) && incoming().equippedOutfit in incoming().ownedOutfits))
+            && (!('equippedWeapon' in incoming()) || (('ownedWeapons' in incoming()) && incoming().equippedWeapon in incoming().ownedWeapons))
+            && (!('equippedSidearm' in incoming()) || (('ownedWeapons' in incoming()) && incoming().equippedSidearm in incoming().ownedWeapons))
+            && (!('equippedKnife' in incoming()) || (('ownedKnives' in incoming()) && incoming().equippedKnife in incoming().ownedKnives))
+            && (!('equippedWeaponSkin' in incoming()) || (('ownedWeaponSkins' in incoming()) && incoming().equippedWeaponSkin in incoming().ownedWeaponSkins))
+          )
+          // Action 1: Update display name, gender, or country
+          || incoming().diff(existing()).affectedKeys().hasOnly(['playerName', 'gender', 'country', 'updatedAt'])
+          // Action 2: Migrate legacy profile missing wallet/outfits fields
+          || (
+            !('coins' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['playerName', 'gender', 'country', 'coins', 'rankedWins', 'ownedOutfits', 'equippedOutfit', 'outfitLevels', 'ownedWeapons', 'equippedWeapon', 'equippedSidearm', 'ownedKnives', 'equippedKnife', 'ownedWeaponSkins', 'equippedWeaponSkin', 'updatedAt'])
+            && ('coins' in incoming()) && ('ownedOutfits' in incoming()) && ('equippedOutfit' in incoming())
+            && incoming().coins >= 0 && incoming().coins <= 250
+            && (!('rankedWins' in incoming()) || (incoming().rankedWins >= 0 && incoming().rankedWins <= 1))
+            && incoming().equippedOutfit in incoming().ownedOutfits
+            && (!('equippedWeapon' in incoming()) || (('ownedWeapons' in incoming()) && incoming().equippedWeapon in incoming().ownedWeapons))
+            && (!('equippedSidearm' in incoming()) || (('ownedWeapons' in incoming()) && incoming().equippedSidearm in incoming().ownedWeapons))
+            && (!('equippedKnife' in incoming()) || (('ownedKnives' in incoming()) && incoming().equippedKnife in incoming().ownedKnives))
+            && (!('equippedWeaponSkin' in incoming()) || (('ownedWeaponSkins' in incoming()) && incoming().equippedWeaponSkin in incoming().ownedWeaponSkins))
+          )
+          // Action 3: Initialize wallet fields only on legacy profile
+          || (
+            !('coins' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'rankedWins', 'ownedOutfits', 'equippedOutfit', 'outfitLevels', 'ownedWeapons', 'equippedWeapon', 'equippedSidearm', 'ownedKnives', 'equippedKnife', 'ownedWeaponSkins', 'equippedWeaponSkin', 'updatedAt'])
+            && ('coins' in incoming()) && ('ownedOutfits' in incoming()) && ('equippedOutfit' in incoming())
+            && incoming().coins >= 0 && incoming().coins <= 250
+            && (!('rankedWins' in incoming()) || (incoming().rankedWins >= 0 && incoming().rankedWins <= 1))
+            && incoming().equippedOutfit in incoming().ownedOutfits
+            && (!('equippedWeapon' in incoming()) || (('ownedWeapons' in incoming()) && incoming().equippedWeapon in incoming().ownedWeapons))
+            && (!('equippedSidearm' in incoming()) || (('ownedWeapons' in incoming()) && incoming().equippedSidearm in incoming().ownedWeapons))
+            && (!('equippedKnife' in incoming()) || (('ownedKnives' in incoming()) && incoming().equippedKnife in incoming().ownedKnives))
+            && (!('equippedWeaponSkin' in incoming()) || (('ownedWeaponSkins' in incoming()) && incoming().equippedWeaponSkin in incoming().ownedWeaponSkins))
+          )
+          // Action 4: Initialize weapon skins fields on existing profile
+          || (
+            !('ownedWeaponSkins' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['ownedWeaponSkins', 'equippedWeaponSkin', 'updatedAt'])
+            && ('ownedWeaponSkins' in incoming()) && ('equippedWeaponSkin' in incoming())
+            && incoming().ownedWeaponSkins == ['default']
+            && incoming().equippedWeaponSkin == 'default'
+          )
+          // Action 5: Record match reward coins (and optional +1 rankedWins)
+          || (
+            ('coins' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'rankedWins', 'updatedAt'])
+            && incoming().coins >= existing().coins
+            && incoming().coins <= existing().coins + 250
+            && (
+              !('rankedWins' in incoming().diff(existing()).affectedKeys())
+              || (('rankedWins' in existing()) && incoming().rankedWins >= existing().rankedWins && incoming().rankedWins <= existing().rankedWins + 1)
+              || (!('rankedWins' in existing()) && incoming().rankedWins >= 0 && incoming().rankedWins <= 1)
+            )
+          )
+          // Action 6: Purchase & equip a suit (Traje) with coins
+          || (
+            ('coins' in existing()) && ('ownedOutfits' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'ownedOutfits', 'equippedOutfit', 'outfitLevels', 'updatedAt'])
+            && incoming().coins < existing().coins
+            && incoming().ownedOutfits.size() >= existing().ownedOutfits.size()
+            && incoming().ownedOutfits.hasAll(existing().ownedOutfits)
+            && incoming().equippedOutfit in incoming().ownedOutfits
+          )
+          // Action 7: Equip an already-owned suit
+          || (
+            ('ownedOutfits' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['equippedOutfit', 'updatedAt'])
+            && incoming().equippedOutfit in existing().ownedOutfits
+          )
+          // Action 8: Purchase & equip a weapon skin with coins
+          || (
+            ('coins' in existing()) && ('ownedWeaponSkins' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'ownedWeaponSkins', 'equippedWeaponSkin', 'updatedAt'])
+            && incoming().coins < existing().coins
+            && incoming().ownedWeaponSkins.size() >= existing().ownedWeaponSkins.size()
+            && incoming().ownedWeaponSkins.hasAll(existing().ownedWeaponSkins)
+            && incoming().equippedWeaponSkin in incoming().ownedWeaponSkins
+          )
+          // Action 9: Purchase & equip first weapon skin when ownedWeaponSkins was absent
+          || (
+            ('coins' in existing()) && !('ownedWeaponSkins' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'ownedWeaponSkins', 'equippedWeaponSkin', 'updatedAt'])
+            && incoming().coins < existing().coins
+            && incoming().ownedWeaponSkins.size() <= 2
+            && 'default' in incoming().ownedWeaponSkins
+            && incoming().equippedWeaponSkin in incoming().ownedWeaponSkins
+          )
+          // Action 10: Equip an already-owned weapon skin
+          || (
+            ('ownedWeaponSkins' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['equippedWeaponSkin', 'updatedAt'])
+            && incoming().equippedWeaponSkin in existing().ownedWeaponSkins
+          )
+          // Action 11: Update live online presence heartbeat
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['onlineStatus', 'currentRoomCode', 'lastSeenAt', 'updatedAt'])
+            && ('onlineStatus' in incoming())
+            && ('lastSeenAt' in incoming())
+            && incoming().lastSeenAt == request.time
+          )
+          // Action 12: Update daily missions match progress (no coins modified)
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['dailyMissionsDate', 'dailyElims', 'dailyWins', 'dailyMatches', 'dailyBestStreak', 'dailyClaimedIds', 'updatedAt'])
+            && ('dailyMissionsDate' in incoming())
+            && ('dailyClaimedIds' in incoming())
+            && (!('dailyMissionsDate' in existing()) || !('dailyClaimedIds' in existing()) || incoming().dailyMissionsDate != existing().dailyMissionsDate || incoming().dailyClaimedIds.hasAll(existing().dailyClaimedIds))
+          )
+          // Action 13: Claim a daily mission coin reward (bounded +1..+120 coins & +1 claimed ID)
+          || (
+            ('coins' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'dailyMissionsDate', 'dailyElims', 'dailyWins', 'dailyMatches', 'dailyBestStreak', 'dailyClaimedIds', 'updatedAt'])
+            && ('dailyMissionsDate' in incoming())
+            && ('dailyClaimedIds' in incoming())
+            && incoming().coins > existing().coins
+            && incoming().coins <= existing().coins + 120
+            && incoming().dailyClaimedIds.size() >= 1
+            && incoming().dailyClaimedIds.size() <= 4
+            && (!('dailyMissionsDate' in existing()) || !('dailyClaimedIds' in existing()) || incoming().dailyMissionsDate != existing().dailyMissionsDate || (incoming().dailyClaimedIds.hasAll(existing().dailyClaimedIds) && incoming().dailyClaimedIds.size() == existing().dailyClaimedIds.size() + 1))
+          )
+          // Action 14: Purchase & equip a distinct primary weapon or sidearm pistol with coins
+          || (
+            ('coins' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'ownedWeapons', 'equippedWeapon', 'equippedSidearm', 'updatedAt'])
+            && ('ownedWeapons' in incoming())
+            && incoming().coins < existing().coins
+            && (!('equippedWeapon' in incoming()) || incoming().equippedWeapon in incoming().ownedWeapons)
+            && (!('equippedSidearm' in incoming()) || incoming().equippedSidearm in incoming().ownedWeapons)
+            && (
+              (!('ownedWeapons' in existing()) && incoming().ownedWeapons.size() <= 3 && 'pulse_carbine' in incoming().ownedWeapons)
+              || (('ownedWeapons' in existing()) && incoming().ownedWeapons.size() >= existing().ownedWeapons.size() && incoming().ownedWeapons.hasAll(existing().ownedWeapons))
+            )
+          )
+          // Action 15: Equip an already-owned primary weapon or sidearm pistol (or initialize defaults on legacy profile)
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['ownedWeapons', 'equippedWeapon', 'equippedSidearm', 'updatedAt'])
+            && (
+              (
+                ('ownedWeapons' in existing())
+                && !('ownedWeapons' in incoming().diff(existing()).affectedKeys())
+                && (!('equippedWeapon' in incoming().diff(existing()).affectedKeys()) || incoming().equippedWeapon in existing().ownedWeapons)
+                && (!('equippedSidearm' in incoming().diff(existing()).affectedKeys()) || incoming().equippedSidearm in existing().ownedWeapons)
+              )
+              || (
+                ('ownedWeapons' in existing())
+                && ('ownedWeapons' in incoming())
+                && incoming().ownedWeapons.hasAll(existing().ownedWeapons)
+                && incoming().ownedWeapons.size() <= existing().ownedWeapons.size() + 1
+                && 'tactical_pistol' in incoming().ownedWeapons
+                && (!('equippedSidearm' in incoming()) || incoming().equippedSidearm in incoming().ownedWeapons)
+                && (!('equippedWeapon' in incoming()) || incoming().equippedWeapon in incoming().ownedWeapons)
+              )
+              || (
+                !('ownedWeapons' in existing())
+                && ('ownedWeapons' in incoming())
+                && incoming().ownedWeapons.hasAll(['pulse_carbine', 'tactical_pistol'])
+                && incoming().ownedWeapons.size() == 2
+                && (!('equippedWeapon' in incoming()) || incoming().equippedWeapon == 'pulse_carbine')
+                && (!('equippedSidearm' in incoming()) || incoming().equippedSidearm == 'tactical_pistol')
+              )
+            )
+          )
+          // Action 16: Upgrade an owned suit (Traje) with coins
+          || (
+            ('coins' in existing()) && ('ownedOutfits' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'outfitLevels', 'updatedAt'])
+            && ('outfitLevels' in incoming())
+            && incoming().coins < existing().coins
+            && (!('outfitLevels' in existing()) || incoming().outfitLevels.size() >= existing().outfitLevels.size())
+          )
+          // Action 17: Purchase & equip a melee knife with coins
+          || (
+            ('coins' in existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'ownedKnives', 'equippedKnife', 'updatedAt'])
+            && ('ownedKnives' in incoming()) && ('equippedKnife' in incoming())
+            && incoming().coins < existing().coins
+            && incoming().equippedKnife in incoming().ownedKnives
+            && (
+              (!('ownedKnives' in existing()) && incoming().ownedKnives.size() <= 2 && 'tactical_blade' in incoming().ownedKnives)
+              || (('ownedKnives' in existing()) && incoming().ownedKnives.size() >= existing().ownedKnives.size() && incoming().ownedKnives.hasAll(existing().ownedKnives))
+            )
+          )
+          // Action 18: Equip an already-owned knife (or initialize default knife on legacy profile)
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['ownedKnives', 'equippedKnife', 'updatedAt'])
+            && ('equippedKnife' in incoming())
+            && (
+              (('ownedKnives' in existing()) && !('ownedKnives' in incoming().diff(existing()).affectedKeys()) && incoming().equippedKnife in existing().ownedKnives)
+              || (!('ownedKnives' in existing()) && ('ownedKnives' in incoming()) && incoming().ownedKnives == ['tactical_blade'] && incoming().equippedKnife == 'tactical_blade')
+            )
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    match /roomInvites/{inviteId} {
+      allow get: if isValidId(inviteId)
+        && isVerifiedUser()
+        && (existing().toUid == request.auth.uid || existing().fromUid == request.auth.uid);
+
+      allow list: if isVerifiedUser()
+        && (existing().toUid == request.auth.uid || existing().fromUid == request.auth.uid);
+
+      allow create: if isValidId(inviteId)
+        && isVerifiedUser()
+        && isValidRoomInvite(incoming())
+        && incoming().fromUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/userProfiles/$(incoming().toUid));
+
+      allow update: if isValidId(inviteId)
+        && isVerifiedUser()
+        && isValidRoomInvite(incoming())
+        && existing().toUid == request.auth.uid
+        && existing().status == 'pending'
+        && (incoming().status == 'accepted' || incoming().status == 'declined')
+        && incoming().fromUid == existing().fromUid
+        && incoming().toUid == existing().toUid
+        && incoming().roomCode == existing().roomCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+
+      allow delete: if isValidId(inviteId)
+        && isVerifiedUser()
+        && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+    }
+  }
+}
