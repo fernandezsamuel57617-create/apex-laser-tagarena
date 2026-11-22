@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import express from 'express';
 import fs from 'fs';
 import http from 'http';
@@ -96,6 +97,131 @@ const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
+const FIREBASE_CONFIG_FILE = path.resolve(__dirname, 'firebase-applet-config.json');
+const DEFAULT_ADMIN_EMAIL = 'fernandezsamuel57617@gmail.com';
+
+function resolveFirebaseProjectId(): string {
+  const fromEnv = (process.env.FIREBASE_PROJECT_ID || '').trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const raw = fs.readFileSync(FIREBASE_CONFIG_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as { projectId?: unknown };
+    if (typeof parsed.projectId === 'string' && parsed.projectId.trim()) {
+      return parsed.projectId.trim();
+    }
+  } catch {
+    // Ignore missing or unreadable firebase config file
+  }
+  return '';
+}
+
+const FIREBASE_PROJECT_ID = resolveFirebaseProjectId();
+const ADMIN_UID = (process.env.ADMIN_UID || '').trim();
+const ADMIN_EMAILS = new Set(
+  [
+    DEFAULT_ADMIN_EMAIL,
+    ...(process.env.ADMIN_EMAILS || '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  ].map((s) => s.toLowerCase()),
+);
+
+const GOOGLE_CERTS_URL =
+  'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
+let cachedGoogleCerts: Record<string, string> = {};
+let cachedGoogleCertsExpiresAt = 0;
+
+async function fetchGooglePublicCerts(forceRefresh = false): Promise<Record<string, string>> {
+  const now = Date.now();
+  if (!forceRefresh && now < cachedGoogleCertsExpiresAt && Object.keys(cachedGoogleCerts).length > 0) {
+    return cachedGoogleCerts;
+  }
+  const res = await fetch(GOOGLE_CERTS_URL);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch Google public certs: ${res.status}`);
+  }
+  const certs = (await res.json()) as Record<string, string>;
+  const cacheControl = res.headers.get('cache-control') || '';
+  const maxAgeMatch = /max-age=(\d+)/i.exec(cacheControl);
+  const maxAgeSec = maxAgeMatch ? Math.max(60, Number(maxAgeMatch[1])) : 300;
+  cachedGoogleCerts = certs;
+  cachedGoogleCertsExpiresAt = now + maxAgeSec * 1000;
+  return certs;
+}
+
+async function verifyFirebaseAdminToken(
+  idToken: unknown,
+): Promise<{ uid: string; email: string } | null> {
+  if (!FIREBASE_PROJECT_ID) return null;
+  if (typeof idToken !== 'string') return null;
+  const trimmed = idToken.trim();
+  if (trimmed.length < 20 || trimmed.length > 8192) return null;
+
+  const parts = trimmed.split('.');
+  if (parts.length !== 3) return null;
+  const [headerB64, payloadB64, signatureB64] = parts;
+  if (!headerB64 || !payloadB64 || !signatureB64) return null;
+
+  let header: { alg?: unknown; kid?: unknown };
+  let payload: {
+    aud?: unknown;
+    iss?: unknown;
+    sub?: unknown;
+    exp?: unknown;
+    iat?: unknown;
+    auth_time?: unknown;
+    email?: unknown;
+    email_verified?: unknown;
+  };
+  try {
+    header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
+    payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+
+  if (header.alg !== 'RS256' || typeof header.kid !== 'string' || !header.kid) {
+    return null;
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (payload.aud !== FIREBASE_PROJECT_ID) return null;
+  if (payload.iss !== `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`) return null;
+  if (typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 128) return null;
+  if (typeof payload.exp !== 'number' || payload.exp <= nowSec) return null;
+  if (typeof payload.iat !== 'number' || payload.iat > nowSec + 300) return null;
+  if (typeof payload.auth_time === 'number' && payload.auth_time > nowSec + 300) return null;
+  if (payload.email_verified !== true) return null;
+
+  const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
+  const isAllowedAdmin =
+    (email && ADMIN_EMAILS.has(email)) || (Boolean(ADMIN_UID) && payload.sub === ADMIN_UID);
+  if (!isAllowedAdmin) return null;
+
+  try {
+    let certs = await fetchGooglePublicCerts(false);
+    let certPem = certs[header.kid];
+    if (!certPem) {
+      certs = await fetchGooglePublicCerts(true);
+      certPem = certs[header.kid];
+    }
+    if (typeof certPem !== 'string' || !certPem.includes('BEGIN CERTIFICATE')) {
+      return null;
+    }
+
+    const verifier = crypto.createVerify('RSA-SHA256');
+    verifier.update(`${headerB64}.${payloadB64}`);
+    verifier.end();
+    const signature = Buffer.from(signatureB64, 'base64url');
+    if (!verifier.verify(certPem, signature)) {
+      return null;
+    }
+    return { uid: payload.sub, email };
+  } catch {
+    return null;
+  }
+}
 
 const DATA_DIR = path.resolve(__dirname, 'data');
 const LEADERBOARD_FILE = path.join(DATA_DIR, 'leaderboard.json');
@@ -2183,7 +2309,7 @@ function spawnEventDrops(room: GameRoom, kind: ArenaDropKind, count: number, nea
 }
 
 function canPlayerUseCdm(player: ServerPlayer): boolean {
-  return !player.isBot;
+  return !player.isBot && player.isAdmin === true;
 }
 
 interface ParsedCdmCommand {
@@ -3302,6 +3428,7 @@ async function startServer() {
   wss.on('connection', (ws) => {
     const playerId = nextId('usr');
     let joined = false;
+    let joining = false;
 
     ws.on('message', async (raw) => {
       let msg: ClientToServerMessage;
@@ -3317,6 +3444,9 @@ async function startServer() {
       }
 
       if (msg.type === 'join') {
+        if (joined || joining) return;
+        joining = true;
+        try {
         const cleanName = String(msg.name || 'Agente')
           .trim()
           .slice(0, 18) || 'Agente';
@@ -3497,7 +3627,11 @@ async function startServer() {
           botStrafeSign: 1,
         };
 
-        player.isAdmin = true;
+        const verifiedAdmin = await verifyFirebaseAdminToken(msg.authIdToken);
+        if (ws.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        player.isAdmin = Boolean(verifiedAdmin);
 
         syncPlayerAmmoToRoomWeapon(targetRoom, player);
         targetRoom.players.set(playerId, player);
@@ -3518,6 +3652,9 @@ async function startServer() {
           broadcastPublicRooms();
         }
         return;
+        } finally {
+          joining = false;
+        }
       }
 
       if (!joined) return;
@@ -3728,11 +3865,36 @@ async function startServer() {
       }
 
       if (msg.type === 'auth_refresh') {
+        const verifiedAdmin = await verifyFirebaseAdminToken(msg.authIdToken);
+        if (ws.readyState !== WebSocket.OPEN) return;
+        const nextIsAdmin = Boolean(verifiedAdmin);
+        if (player.isAdmin !== nextIsAdmin) {
+          player.isAdmin = nextIsAdmin;
+          if (!nextIsAdmin) {
+            player.canFly = false;
+            player.godMode = false;
+            player.speedBoosted = false;
+            player.infiniteAmmo = false;
+            if (player.infiniteCoins) {
+              player.infiniteCoins = false;
+              player.coins = player.savedCoinsBeforeInfinite;
+            }
+          }
+          sendToRoom(room, { type: 'state', state: getStatePayload(room) });
+        }
         return;
       }
 
       if (msg.type === 'cdm_request') {
         const line = String(msg.commandLine || '').trim();
+        if (!canPlayerUseCdm(player) && msg.authIdToken) {
+          const verifiedAdmin = await verifyFirebaseAdminToken(msg.authIdToken);
+          if (ws.readyState !== WebSocket.OPEN) return;
+          if (verifiedAdmin) {
+            player.isAdmin = true;
+            sendToRoom(room, { type: 'state', state: getStatePayload(room) });
+          }
+        }
         if (!canPlayerUseCdm(player)) {
           sendTo(ws, {
             type: 'cdm_response',
@@ -3763,6 +3925,14 @@ async function startServer() {
       }
 
       if (msg.type === 'cdm_execute') {
+        if (!canPlayerUseCdm(player) && msg.authIdToken) {
+          const verifiedAdmin = await verifyFirebaseAdminToken(msg.authIdToken);
+          if (ws.readyState !== WebSocket.OPEN) return;
+          if (verifiedAdmin) {
+            player.isAdmin = true;
+            sendToRoom(room, { type: 'state', state: getStatePayload(room) });
+          }
+        }
         if (!canPlayerUseCdm(player)) {
           sendTo(ws, {
             type: 'cdm_response',
