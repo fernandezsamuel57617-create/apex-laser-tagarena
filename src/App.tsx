@@ -531,6 +531,16 @@ export default function App() {
 
       setConnecting(true);
 
+      let authIdToken: string | undefined;
+      const currentAuthUser = authUser ?? authUserRef.current;
+      if (currentAuthUser && currentAuthUser.emailVerified) {
+        try {
+          authIdToken = await currentAuthUser.getIdToken();
+        } catch {
+          authIdToken = undefined;
+        }
+      }
+
       if (wsRef.current) {
         const prevWs = wsRef.current;
         wsRef.current = null;
@@ -563,6 +573,7 @@ export default function App() {
             equippedKnife: activeProfile?.equippedKnife ?? 'tactical_blade',
             ownedWeaponSkins: activeProfile?.ownedWeaponSkins ?? ['default'],
             equippedWeaponSkin: activeProfile?.equippedWeaponSkin ?? 'default',
+            ...(authIdToken ? { authIdToken } : {}),
           } satisfies ClientToServerMessage),
         );
       };
@@ -764,6 +775,14 @@ export default function App() {
             setChatBlockedReason(null);
           } else {
             const deniedMsg = msg.message || 'No se pudo abrir CDM.';
+            setCdmOpen(false);
+            setCdmPowers({
+              canFly: false,
+              speedBoosted: false,
+              godMode: false,
+              infiniteAmmo: false,
+              infiniteCoins: false,
+            });
             setChatBlockedReason(deniedMsg);
           }
         } else if (msg.type === 'report_ack') {
@@ -872,6 +891,31 @@ export default function App() {
     handleEnterLobby,
   ]);
 
+  // Sync Firebase auth token with active WebSocket session if login state changes
+  useEffect(() => {
+    if (!joined || wsRef.current?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    let cancelled = false;
+    const syncAuth = async () => {
+      let token = '';
+      if (authUser && authUser.emailVerified) {
+        try {
+          token = await authUser.getIdToken();
+        } catch {
+          token = '';
+        }
+      }
+      if (!cancelled && wsRef.current?.readyState === WebSocket.OPEN) {
+        sendWs({ type: 'auth_refresh', authIdToken: token });
+      }
+    };
+    void syncAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser, joined, sendWs]);
+
   // Cleanup WebSocket on unmount
   useEffect(() => {
     return () => {
@@ -956,6 +1000,8 @@ export default function App() {
         e.preventDefault();
         voiceManagerRef.current?.toggleMicMute();
       } else if (e.code === 'F4') {
+        const currentMe = serverState?.players.find((p) => p.id === myIdRef.current);
+        if (!currentMe?.isAdmin) return;
         e.preventDefault();
         if (cdmOpen) {
           setCdmOpen(false);
@@ -969,6 +1015,7 @@ export default function App() {
   }, [
     joined,
     serverState?.phase,
+    serverState?.players,
     leaderboardOpen,
     inventoryOpen,
     missionsOpen,
@@ -1387,7 +1434,12 @@ export default function App() {
       const trimmed = text.trim();
       if (!trimmed) return;
       const lower = trimmed.toLowerCase();
-      if (lower === 'cdm' || lower === '/cdm' || trimmed.startsWith('/')) {
+      const currentMe = serverState?.players.find((p) => p.id === myIdRef.current);
+      if (
+        (currentMe?.isAdmin && lower === 'cdm') ||
+        lower === '/cdm' ||
+        trimmed.startsWith('/')
+      ) {
         setChatBlockedReason(null);
         sendWs({ type: 'cdm_request', commandLine: trimmed });
         return;
@@ -1395,16 +1447,21 @@ export default function App() {
       setChatBlockedReason(null);
       sendWs({ type: 'chat', text: trimmed });
     },
-    [sendWs],
+    [sendWs, serverState?.players],
   );
 
   const handleToggleCdmPanel = useCallback(() => {
+    const currentMe = serverState?.players.find((p) => p.id === myIdRef.current);
+    if (!currentMe?.isAdmin) {
+      setCdmOpen(false);
+      return;
+    }
     if (cdmOpen) {
       setCdmOpen(false);
       return;
     }
     sendWs({ type: 'cdm_request', commandLine: 'cdm' });
-  }, [cdmOpen, sendWs]);
+  }, [cdmOpen, sendWs, serverState?.players]);
 
   const handleExecuteCdmCommand = useCallback(
     (command: CdmCommandId, targetId?: string) => {
@@ -1926,7 +1983,7 @@ export default function App() {
           </div>
         )}
 
-        {serverState && (
+        {serverState && mePlayer?.isAdmin && (
           <CdmCommandModal
             open={cdmOpen}
             onClose={() => setCdmOpen(false)}
