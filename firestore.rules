@@ -82,7 +82,7 @@ service cloud.firestore {
           'obsidian_royale',
           'celestial_nova'
         ])
-        && (!('default' in levels) || (levels.default is int && levels.default >= 1 && levels.default <= 4))
+        && (!('default' in levels) || (levels['default'] is int && levels['default'] >= 1 && levels['default'] <= 4))
         && (!('cyber_crimson' in levels) || (levels.cyber_crimson is int && levels.cyber_crimson >= 1 && levels.cyber_crimson <= 4))
         && (!('neon_phantom' in levels) || (levels.neon_phantom is int && levels.neon_phantom >= 1 && levels.neon_phantom <= 4))
         && (!('arctic_stealth' in levels) || (levels.arctic_stealth is int && levels.arctic_stealth >= 1 && levels.arctic_stealth <= 4))
@@ -329,19 +329,47 @@ service cloud.firestore {
       allow update: if isValidId(userId)
         && isOwner(userId)
         && isValidUserProfile(incoming(), userId)
-        && incoming().uid == existing().uid
+        && (!('uid' in existing()) || incoming().uid == existing().uid)
         && (
-          (('createdAt' in existing()) && incoming().createdAt == existing().createdAt)
-          || (!('createdAt' in existing()) && incoming().createdAt == request.time)
+          (('createdAt' in existing()) && existing().createdAt is timestamp && incoming().createdAt == existing().createdAt)
+          || ((!('createdAt' in existing()) || !(existing().createdAt is timestamp)) && incoming().createdAt == request.time)
         )
         && incoming().updatedAt == request.time
         && (
-          // Action 0: Repair / backfill legacy profile missing required schema fields without inflating balances
+          // Action 0: Repair / backfill legacy profile missing or invalid schema fields without inflating balances
           (
-            (!('createdAt' in existing()) || !('ownedOutfits' in existing()) || !('ownedWeapons' in existing()) || !('ownedWeaponSkins' in existing()) || !('outfitLevels' in existing()) || !('ownedKnives' in existing()) || !('equippedSidearm' in existing()))
-            && incoming().diff(existing()).affectedKeys().hasOnly(['playerName', 'gender', 'country', 'coins', 'rankedWins', 'ownedOutfits', 'equippedOutfit', 'outfitLevels', 'ownedWeapons', 'equippedWeapon', 'equippedSidearm', 'ownedKnives', 'equippedKnife', 'ownedWeaponSkins', 'equippedWeaponSkin', 'createdAt', 'updatedAt'])
-            && ((!('coins' in existing()) && incoming().coins == 0) || (('coins' in existing()) && incoming().coins == existing().coins))
-            && ((!('rankedWins' in existing()) && (!('rankedWins' in incoming()) || incoming().rankedWins == 0)) || (('rankedWins' in existing()) && incoming().rankedWins == existing().rankedWins))
+            (
+              !('createdAt' in existing())
+              || !(existing().createdAt is timestamp)
+              || !('ownedOutfits' in existing())
+              || !('ownedWeapons' in existing())
+              || !(existing().ownedWeapons is list)
+              || !('tactical_pistol' in existing().ownedWeapons)
+              || !('ownedWeaponSkins' in existing())
+              || !('outfitLevels' in existing())
+              || !('ownedKnives' in existing())
+              || !('equippedSidearm' in existing())
+              || !existing().keys().hasOnly([
+                'uid', 'playerName', 'gender', 'country', 'coins', 'rankedWins',
+                'ownedOutfits', 'equippedOutfit', 'outfitLevels',
+                'ownedWeapons', 'equippedWeapon', 'equippedSidearm',
+                'ownedKnives', 'equippedKnife', 'ownedWeaponSkins', 'equippedWeaponSkin',
+                'onlineStatus', 'currentRoomCode',
+                'dailyMissionsDate', 'dailyElims', 'dailyWins', 'dailyMatches', 'dailyBestStreak', 'dailyClaimedIds',
+                'lastSeenAt', 'createdAt', 'updatedAt'
+              ])
+            )
+            && ((!('coins' in existing()) || !(existing().coins is int)) ? incoming().coins == 0 : incoming().coins == existing().coins)
+            && ((!('rankedWins' in existing()) || !(existing().rankedWins is int)) ? (!('rankedWins' in incoming()) || incoming().rankedWins == 0) : incoming().rankedWins == existing().rankedWins)
+            && (!('ownedOutfits' in existing()) || !(existing().ownedOutfits is list) || (incoming().ownedOutfits.size() == existing().ownedOutfits.size() && incoming().ownedOutfits.hasAll(existing().ownedOutfits)))
+            && (
+              (!('ownedWeapons' in existing()) || !(existing().ownedWeapons is list))
+                ? incoming().ownedWeapons == ['pulse_carbine', 'tactical_pistol']
+                : (incoming().ownedWeapons.hasAll(existing().ownedWeapons) && incoming().ownedWeapons.size() <= existing().ownedWeapons.size() + 1 && ('tactical_pistol' in incoming().ownedWeapons))
+            )
+            && (!('ownedKnives' in existing()) || !(existing().ownedKnives is list) || (incoming().ownedKnives.size() == existing().ownedKnives.size() && incoming().ownedKnives.hasAll(existing().ownedKnives)))
+            && (!('ownedWeaponSkins' in existing()) || !(existing().ownedWeaponSkins is list) || (incoming().ownedWeaponSkins.size() == existing().ownedWeaponSkins.size() && incoming().ownedWeaponSkins.hasAll(existing().ownedWeaponSkins)))
+            && (!('dailyMissionsDate' in existing()) || !('dailyClaimedIds' in existing()) || incoming().dailyMissionsDate != existing().dailyMissionsDate || incoming().dailyClaimedIds == existing().dailyClaimedIds)
             && (!('equippedOutfit' in incoming()) || (('ownedOutfits' in incoming()) && incoming().equippedOutfit in incoming().ownedOutfits))
             && (!('equippedWeapon' in incoming()) || (('ownedWeapons' in incoming()) && incoming().equippedWeapon in incoming().ownedWeapons))
             && (!('equippedSidearm' in incoming()) || (('ownedWeapons' in incoming()) && incoming().equippedSidearm in incoming().ownedWeapons))
