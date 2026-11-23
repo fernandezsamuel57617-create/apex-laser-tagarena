@@ -18,6 +18,10 @@ import {
   auth,
   claimDailyMissionRewardInProfile,
   loadUserProfile,
+  refreshCurrentUser,
+  registerWithEmailPassword,
+  resendVerificationEmail,
+  resetPasswordByEmail,
   respondToRoomInvite,
   saveDailyMissionsProgressToProfile,
   saveEquippedKnifeToProfile,
@@ -32,14 +36,17 @@ import {
   saveWeaponPurchaseToProfile,
   saveWeaponSkinPurchaseToProfile,
   sendRoomInvite,
+  signInWithEmailPassword,
   signInWithGoogle,
   signInWithGoogleIdToken,
+  signInWithSocialProvider,
   signOutGoogle,
   subscribeToIncomingRoomInvites,
   updateUserPresence,
   type FriendProfileItem,
   type RoomInviteRecord,
   type SavedPlayerProfile,
+  type SocialAuthProviderId,
 } from './firebase';
 import { ArenaEngine, type WeaponHudState } from './game/ArenaEngine';
 import {
@@ -102,6 +109,7 @@ export default function App() {
 
   const [authReady, setAuthReady] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authEmailVerified, setAuthEmailVerified] = useState(false);
   const [savedProfile, setSavedProfile] = useState<SavedPlayerProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
@@ -261,6 +269,7 @@ export default function App() {
     const unsub = onAuthStateChanged(auth, async (user) => {
       window.clearTimeout(fallbackTimer);
       setAuthUser(user);
+      setAuthEmailVerified(Boolean(user?.emailVerified));
       setAuthError(null);
       if (!user) {
         setSavedProfile(null);
@@ -431,22 +440,47 @@ export default function App() {
     }
   }, [serverState]);
 
-  const formatAuthError = (err: unknown): string => {
+  const formatAuthError = (err: unknown, providerLabel = 'este método'): string => {
     const code = (err as { code?: string } | null)?.code || '';
     const msg = err instanceof Error ? err.message : String(err ?? '');
+    if (code === 'auth/operation-not-allowed') {
+      return `El acceso con ${providerLabel} aún no está activado en Firebase Console (Authentication → Sign-in method).`;
+    }
+    if (code === 'auth/account-exists-with-different-credential') {
+      return 'Ya existe una cuenta registrada con ese correo usando otro método (por ejemplo Google). Inicia sesión con ese método primero.';
+    }
+    if (code === 'auth/email-already-in-use') {
+      return 'Ese correo ya tiene una cuenta registrada. Cambia a "Iniciar sesión" o usa "Olvidé mi clave".';
+    }
+    if (code === 'auth/invalid-email') {
+      return 'El formato del correo electrónico no es válido.';
+    }
+    if (code === 'auth/weak-password') {
+      return 'La contraseña debe tener al menos 6 caracteres.';
+    }
+    if (
+      code === 'auth/invalid-credential' ||
+      code === 'auth/wrong-password' ||
+      code === 'auth/user-not-found'
+    ) {
+      return 'Correo o contraseña incorrectos.';
+    }
+    if (code === 'auth/too-many-requests') {
+      return 'Demasiados intentos seguidos. Espera un momento antes de volver a intentarlo.';
+    }
     if (code === 'auth/popup-closed-by-user' || msg.includes('popup-closed-by-user')) {
-      return 'La ventana de Google se cerró antes de completar el acceso. Si estás dentro de una vista previa, usa el botón oficial de Google de arriba o abre el juego en una pestaña nueva.';
+      return `La ventana de ${providerLabel} se cerró antes de completar el acceso. Si estás dentro de una vista previa, abre el juego en una pestaña nueva o usa Correo y contraseña.`;
     }
     if (code === 'auth/popup-blocked' || msg.includes('popup-blocked')) {
-      return 'El navegador bloqueó la ventana emergente. Usa el botón oficial de Google de arriba, permite ventanas emergentes o abre el juego en una pestaña nueva.';
+      return 'El navegador bloqueó la ventana emergente. Permite ventanas emergentes o abre el juego en una pestaña nueva.';
     }
     if (code === 'auth/unauthorized-domain' || msg.includes('unauthorized-domain')) {
-      return `Dominio no autorizado en Firebase (${window.location.hostname}). Usa el botón oficial de Google de arriba o entra en modo invitado.`;
+      return `Dominio no autorizado en Firebase (${window.location.hostname}). Agrégalo en Firebase Console → Authentication → Settings → Authorized domains.`;
     }
     if (code === 'auth/cancelled-popup-request') {
       return 'Se canceló la solicitud anterior. Intenta iniciar sesión nuevamente.';
     }
-    return `No se pudo iniciar sesión con Google (${code || 'error de conexión'}). Prueba con el botón oficial de Google de arriba o abre en una pestaña nueva.`;
+    return `No se pudo iniciar sesión con ${providerLabel} (${code || 'error de conexión'}).`;
   };
 
   const handleGoogleCredential = useCallback(async (idToken: string) => {
@@ -456,7 +490,7 @@ export default function App() {
       await signInWithGoogleIdToken(idToken);
     } catch (err) {
       console.error('Google GIS credential error:', err);
-      setAuthError(formatAuthError(err));
+      setAuthError(formatAuthError(err, 'Google'));
     } finally {
       setSigningIn(false);
     }
@@ -469,11 +503,109 @@ export default function App() {
       await signInWithGoogle();
     } catch (err) {
       console.error('Google Popup error:', err);
-      setAuthError(formatAuthError(err));
+      setAuthError(formatAuthError(err, 'Google'));
     } finally {
       setSigningIn(false);
     }
   }, []);
+
+  const handleSocialSignIn = useCallback(async (providerId: SocialAuthProviderId) => {
+    const labelMap: Record<SocialAuthProviderId, string> = {
+      google: 'Google',
+      github: 'GitHub',
+      microsoft: 'Microsoft',
+      facebook: 'Facebook',
+      twitter: 'X (Twitter)',
+    };
+    setSigningIn(true);
+    setAuthError(null);
+    try {
+      await signInWithSocialProvider(providerId);
+    } catch (err) {
+      console.error(`Social auth (${providerId}) error:`, err);
+      setAuthError(formatAuthError(err, labelMap[providerId]));
+    } finally {
+      setSigningIn(false);
+    }
+  }, []);
+
+  const handleEmailSignIn = useCallback(async (email: string, password: string) => {
+    setSigningIn(true);
+    setAuthError(null);
+    try {
+      await signInWithEmailPassword(email, password);
+    } catch (err) {
+      console.error('Email sign-in error:', err);
+      setAuthError(formatAuthError(err, 'Correo y contraseña'));
+    } finally {
+      setSigningIn(false);
+    }
+  }, []);
+
+  const handleEmailRegister = useCallback(
+    async (email: string, password: string, displayName?: string) => {
+      setSigningIn(true);
+      setAuthError(null);
+      try {
+        await registerWithEmailPassword(email, password, displayName);
+      } catch (err) {
+        console.error('Email register error:', err);
+        setAuthError(formatAuthError(err, 'registro por correo'));
+      } finally {
+        setSigningIn(false);
+      }
+    },
+    [],
+  );
+
+  const handleResetPassword = useCallback(async (email: string): Promise<boolean> => {
+    setSigningIn(true);
+    setAuthError(null);
+    try {
+      await resetPasswordByEmail(email);
+      return true;
+    } catch (err) {
+      console.error('Password reset error:', err);
+      setAuthError(formatAuthError(err, 'recuperación de contraseña'));
+      return false;
+    } finally {
+      setSigningIn(false);
+    }
+  }, []);
+
+  const handleResendVerification = useCallback(async (): Promise<boolean> => {
+    setAuthError(null);
+    try {
+      await resendVerificationEmail();
+      return true;
+    } catch (err) {
+      console.error('Resend verification error:', err);
+      setAuthError(formatAuthError(err, 'envío de verificación'));
+      return false;
+    }
+  }, []);
+
+  const handleRefreshVerification = useCallback(async (): Promise<boolean> => {
+    setAuthError(null);
+    try {
+      const verified = await refreshCurrentUser();
+      setAuthEmailVerified(verified);
+      if (verified && auth.currentUser) {
+        const profile = await loadUserProfile(auth.currentUser.uid);
+        setSavedProfile(profile);
+        if (joined && wsRef.current?.readyState === WebSocket.OPEN) {
+          const token = await auth.currentUser.getIdToken(true).catch(() => '');
+          if (token) {
+            sendWs({ type: 'auth_refresh', authIdToken: token });
+          }
+        }
+      }
+      return verified;
+    } catch (err) {
+      console.error('Refresh verification error:', err);
+      return false;
+    }
+  }, [joined, sendWs]);
 
   const handleGoogleSignOut = useCallback(async () => {
     setAuthError(null);
@@ -493,6 +625,7 @@ export default function App() {
       setMyId(null);
       engineRef.current?.setMode('preview');
       await signOutGoogle();
+      setAuthEmailVerified(false);
       setSavedProfile(null);
     } catch {
       setAuthError('No se pudo cerrar la sesión.');
@@ -1741,6 +1874,7 @@ export default function App() {
           <CharacterSelectScreen
             authReady={authReady}
             authUser={authUser}
+            authEmailVerified={authEmailVerified}
             savedProfile={savedProfile}
             profileLoading={profileLoading}
             signingIn={signingIn}
@@ -1748,7 +1882,14 @@ export default function App() {
             authError={authError}
             onGoogleCredential={handleGoogleCredential}
             onGoogleSignIn={handleGoogleSignIn}
+            onSocialSignIn={handleSocialSignIn}
+            onEmailSignIn={handleEmailSignIn}
+            onEmailRegister={handleEmailRegister}
+            onResetPassword={handleResetPassword}
+            onResendVerification={handleResendVerification}
+            onRefreshVerification={handleRefreshVerification}
             onGoogleSignOut={handleGoogleSignOut}
+            onClearAuthError={() => setAuthError(null)}
             onEnterLobby={handleEnterLobby}
             connecting={connecting}
             errorMsg={connectError}

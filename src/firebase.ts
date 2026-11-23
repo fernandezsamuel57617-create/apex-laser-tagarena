@@ -1,10 +1,20 @@
 import { initializeApp } from 'firebase/app';
 import {
+  FacebookAuthProvider,
+  GithubAuthProvider,
   GoogleAuthProvider,
+  OAuthProvider,
+  TwitterAuthProvider,
+  createUserWithEmailAndPassword,
   getAuth,
+  reload,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithCredential,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  updateProfile,
   type UserCredential,
 } from 'firebase/auth';
 import {
@@ -62,6 +72,21 @@ export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({
   prompt: 'select_account',
 });
+
+export const githubProvider = new GithubAuthProvider();
+githubProvider.addScope('user:email');
+
+export const microsoftProvider = new OAuthProvider('microsoft.com');
+microsoftProvider.setCustomParameters({
+  prompt: 'select_account',
+});
+
+export const facebookProvider = new FacebookAuthProvider();
+facebookProvider.addScope('email');
+
+export const twitterProvider = new TwitterAuthProvider();
+
+export type SocialAuthProviderId = 'google' | 'github' | 'microsoft' | 'facebook' | 'twitter';
 
 export enum OperationType {
   CREATE = 'create',
@@ -238,6 +263,59 @@ function timestampToMs(val: unknown): number {
 
 export async function signInWithGoogle(): Promise<UserCredential> {
   return signInWithPopup(auth, googleProvider);
+}
+
+export async function signInWithSocialProvider(
+  providerId: SocialAuthProviderId,
+): Promise<UserCredential> {
+  switch (providerId) {
+    case 'google':
+      return signInWithPopup(auth, googleProvider);
+    case 'github':
+      return signInWithPopup(auth, githubProvider);
+    case 'microsoft':
+      return signInWithPopup(auth, microsoftProvider);
+    case 'facebook':
+      return signInWithPopup(auth, facebookProvider);
+    case 'twitter':
+      return signInWithPopup(auth, twitterProvider);
+  }
+}
+
+export async function signInWithEmailPassword(
+  email: string,
+  password: string,
+): Promise<UserCredential> {
+  return signInWithEmailAndPassword(auth, email.trim(), password);
+}
+
+export async function registerWithEmailPassword(
+  email: string,
+  password: string,
+  displayName?: string,
+): Promise<UserCredential> {
+  const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+  const cleanName = displayName?.trim().slice(0, 18);
+  if (cleanName) {
+    await updateProfile(cred.user, { displayName: cleanName }).catch(() => {});
+  }
+  await sendEmailVerification(cred.user).catch(() => {});
+  return cred;
+}
+
+export async function resendVerificationEmail(): Promise<void> {
+  if (!auth.currentUser) return;
+  await sendEmailVerification(auth.currentUser);
+}
+
+export async function refreshCurrentUser(): Promise<boolean> {
+  if (!auth.currentUser) return false;
+  await reload(auth.currentUser);
+  return Boolean(auth.currentUser?.emailVerified);
+}
+
+export async function resetPasswordByEmail(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email.trim());
 }
 
 export async function signInWithGoogleIdToken(idToken: string): Promise<UserCredential> {
