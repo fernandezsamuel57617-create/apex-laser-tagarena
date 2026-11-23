@@ -81,6 +81,7 @@ export interface PlayerSnapshot {
   country?: string;
   isBot: boolean;
   isAdmin?: boolean;
+  isOwner?: boolean;
   team: TeamId | null;
   accentColor: string;
   equippedOutfit: OutfitId;
@@ -196,7 +197,18 @@ export type CdmCommandId =
   | 'event_rainbow_chaos'
   | 'event_heal_wave'
   | 'owner_announce'
-  | 'clear_owner_announce';
+  | 'clear_owner_announce'
+  | 'toggle_infinite_match'
+  | 'grant_admin_gift'
+  | 'revoke_admin';
+
+export interface ServerAdminPlayerSummary {
+  id: string;
+  name: string;
+  roomCode: string;
+  isAdmin?: boolean;
+  isOwner?: boolean;
+}
 
 export interface OwnerAnnouncement {
   id: string;
@@ -321,6 +333,7 @@ export interface ServerStatePayload {
   botsEnabled: boolean;
   allowedWeapons: WeaponId[];
   infiniteEnergy: boolean;
+  infiniteMatch?: boolean;
   darkHideAndSeek: boolean;
   lowGravityUntil?: number;
   turboArenaUntil?: number;
@@ -537,6 +550,7 @@ export type ClientToServerMessage =
       type: 'cdm_execute';
       command: CdmCommandId;
       targetId?: string;
+      giftMessage?: string;
       authIdToken?: string;
     }
   | {
@@ -656,6 +670,7 @@ export type ServerToClientMessage =
       ok?: boolean;
       message?: string;
       bannedPlayers?: BannedPlayerRecord[];
+      serverPlayers?: ServerAdminPlayerSummary[];
       activePowers?: {
         canFly: boolean;
         speedBoosted: boolean;
@@ -663,6 +678,12 @@ export type ServerToClientMessage =
         infiniteAmmo: boolean;
         infiniteCoins?: boolean;
       };
+    }
+  | {
+      type: 'admin_gift_received';
+      giftId: string;
+      senderName: string;
+      message: string;
     }
   | {
       type: 'teleport_to';

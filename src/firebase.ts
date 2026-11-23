@@ -3,7 +3,6 @@ import {
   FacebookAuthProvider,
   GithubAuthProvider,
   GoogleAuthProvider,
-  OAuthProvider,
   TwitterAuthProvider,
   createUserWithEmailAndPassword,
   getAuth,
@@ -76,17 +75,12 @@ googleProvider.setCustomParameters({
 export const githubProvider = new GithubAuthProvider();
 githubProvider.addScope('user:email');
 
-export const microsoftProvider = new OAuthProvider('microsoft.com');
-microsoftProvider.setCustomParameters({
-  prompt: 'select_account',
-});
-
 export const facebookProvider = new FacebookAuthProvider();
 facebookProvider.addScope('email');
 
 export const twitterProvider = new TwitterAuthProvider();
 
-export type SocialAuthProviderId = 'google' | 'github' | 'microsoft' | 'facebook' | 'twitter';
+export type SocialAuthProviderId = 'google' | 'github' | 'facebook' | 'twitter';
 
 export enum OperationType {
   CREATE = 'create',
@@ -138,6 +132,41 @@ export function handleFirestoreError(
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
+}
+
+export function formatFirestoreErrorMessage(error: unknown, fallback: string): string {
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+  let inner = raw;
+  try {
+    const parsed = JSON.parse(raw) as { error?: unknown };
+    if (typeof parsed?.error === 'string' && parsed.error.trim()) {
+      inner = parsed.error;
+    }
+  } catch {
+    // raw is already a plain error message
+  }
+  const lower = inner.toLowerCase();
+  if (lower.includes('quota exceeded') || lower.includes('resource-exhausted')) {
+    return 'Se alcanzó el límite diario gratuito de Firestore (Quota exceeded). Intenta más tarde.';
+  }
+  if (
+    lower.includes('permission-denied') ||
+    lower.includes('missing or insufficient permissions')
+  ) {
+    return `${fallback} (permisos insuficientes o correo no verificado en Firestore).`;
+  }
+  if (
+    lower.includes('client is offline') ||
+    lower.includes('unavailable') ||
+    lower.includes('network')
+  ) {
+    return `${fallback} (sin conexión con Firestore; revisa tu internet).`;
+  }
+  if (lower.includes('unauthenticated')) {
+    return `${fallback} (la sesión de Google expiró; vuelve a iniciar sesión).`;
+  }
+  const cleanDetail = inner.trim().slice(0, 140);
+  return cleanDetail ? `${fallback} (${cleanDetail})` : fallback;
 }
 
 async function testConnection() {
@@ -273,8 +302,6 @@ export async function signInWithSocialProvider(
       return signInWithPopup(auth, googleProvider);
     case 'github':
       return signInWithPopup(auth, githubProvider);
-    case 'microsoft':
-      return signInWithPopup(auth, microsoftProvider);
     case 'facebook':
       return signInWithPopup(auth, facebookProvider);
     case 'twitter':
@@ -440,6 +467,10 @@ export async function saveUserProfile(
   const path = `userProfiles/${uid}`;
   const docRef = doc(db, 'userProfiles', uid);
 
+  if (auth.currentUser && auth.currentUser.uid === uid) {
+    await auth.currentUser.getIdToken().catch(() => {});
+  }
+
   let existingData: Record<string, unknown> | null = null;
   try {
     const existingSnap = await getDoc(docRef);
@@ -450,6 +481,7 @@ export async function saveUserProfile(
 
   if (existingData) {
     const hasWallet = typeof existingData.coins === 'number';
+    const hasCreatedAt = Boolean(existingData.createdAt);
     const resolvedCountry =
       cleanCountry ??
       (typeof existingData.country === 'string' && /^[A-Z]{2}$/.test(existingData.country)
@@ -457,10 +489,40 @@ export async function saveUserProfile(
         : undefined);
     try {
       if (hasWallet) {
+        const repairPatch: Record<string, unknown> = {};
+        if (!hasCreatedAt) {
+          repairPatch.createdAt = serverTimestamp();
+        }
+        if (!Array.isArray(existingData.ownedOutfits) || existingData.ownedOutfits.length === 0) {
+          repairPatch.ownedOutfits = ['default'];
+          repairPatch.equippedOutfit = 'default';
+        }
+        if (!existingData.outfitLevels || typeof existingData.outfitLevels !== 'object') {
+          repairPatch.outfitLevels = { default: 1 };
+        }
+        if (!Array.isArray(existingData.ownedWeapons) || existingData.ownedWeapons.length === 0) {
+          repairPatch.ownedWeapons = ['pulse_carbine', 'tactical_pistol'];
+          repairPatch.equippedWeapon = 'pulse_carbine';
+          repairPatch.equippedSidearm = 'tactical_pistol';
+        } else if (!isSidearmWeapon(existingData.equippedSidearm as string)) {
+          repairPatch.equippedSidearm = 'tactical_pistol';
+        }
+        if (!Array.isArray(existingData.ownedKnives) || existingData.ownedKnives.length === 0) {
+          repairPatch.ownedKnives = ['tactical_blade'];
+          repairPatch.equippedKnife = 'tactical_blade';
+        }
+        if (
+          !Array.isArray(existingData.ownedWeaponSkins) ||
+          existingData.ownedWeaponSkins.length === 0
+        ) {
+          repairPatch.ownedWeaponSkins = ['default'];
+          repairPatch.equippedWeaponSkin = 'default';
+        }
         await updateDoc(docRef, {
           playerName: cleanName,
           gender: cleanGender,
           ...(resolvedCountry ? { country: resolvedCountry } : {}),
+          ...repairPatch,
           updatedAt: serverTimestamp(),
         });
       } else {
@@ -468,6 +530,7 @@ export async function saveUserProfile(
           playerName: cleanName,
           gender: cleanGender,
           ...(resolvedCountry ? { country: resolvedCountry } : {}),
+          ...(!hasCreatedAt ? { createdAt: serverTimestamp() } : {}),
           coins: 0,
           rankedWins: 0,
           ownedOutfits: ['default'],

@@ -9,6 +9,7 @@ import {
   EyeOff,
   Feather,
   Flame,
+  Gift,
   Heart,
   HeartPulse,
   Infinity as InfinityIcon,
@@ -43,6 +44,7 @@ import type {
   CdmCommandId,
   OwnerAnnouncement,
   PlayerSnapshot,
+  ServerAdminPlayerSummary,
   ServerStatePayload,
 } from '../shared/types';
 import { GAME_LOGO_URL } from './SplashIntroOverlay';
@@ -63,9 +65,10 @@ interface CdmCommandModalProps {
   powers: CdmPowersState;
   feedback: { ok: boolean; text: string } | null;
   bannedPlayers: BannedPlayerRecord[];
+  serverPlayers?: ServerAdminPlayerSummary[];
   activeAnnouncement: OwnerAnnouncement | null;
   announcementLog: OwnerAnnouncement[];
-  onExecuteCommand: (command: CdmCommandId, targetId?: string) => void;
+  onExecuteCommand: (command: CdmCommandId, targetId?: string, giftMessage?: string) => void;
   onSubmitCommandLine: (commandLine: string) => void;
 }
 
@@ -89,6 +92,7 @@ export function CdmCommandModal({
   powers,
   feedback,
   bannedPlayers,
+  serverPlayers,
   activeAnnouncement,
   announcementLog,
   onExecuteCommand,
@@ -100,6 +104,8 @@ export function CdmCommandModal({
   const [tpTargetQuery, setTpTargetQuery] = useState('');
   const [banTargetId, setBanTargetId] = useState('');
   const [banSearchQuery, setBanSearchQuery] = useState('');
+  const [giftTargetId, setGiftTargetId] = useState('');
+  const [giftText, setGiftText] = useState('');
 
   if (!open) return null;
 
@@ -124,6 +130,22 @@ export function CdmCommandModal({
   const infiniteCoins = powers.infiniteCoins || Boolean(me?.infiniteCoins);
 
   const kickablePlayers = state.players.filter((p) => p.id !== me?.id);
+  const serverHumanTargets: ServerAdminPlayerSummary[] = (
+    serverPlayers && serverPlayers.length > 0
+      ? serverPlayers
+      : state.players
+          .filter((p) => !p.isBot)
+          .map((p) => ({
+            id: p.id,
+            name: p.name,
+            roomCode: state.roomCode,
+            isAdmin: p.isAdmin,
+            isOwner: p.isOwner,
+          }))
+  ).filter((p) => p.id !== me?.id);
+  const effectiveGiftTargetId = serverHumanTargets.some((p) => p.id === giftTargetId)
+    ? giftTargetId
+    : (serverHumanTargets[0]?.id ?? '');
   const normalizedBanSearch = banSearchQuery.trim().toLowerCase();
   const filteredBannedPlayers = normalizedBanSearch
     ? bannedPlayers.filter(
@@ -229,6 +251,15 @@ export function CdmCommandModal({
       description: 'Regresa a todos al Lobby inmediatamente',
       icon: <LogOut className="h-4 w-4" />,
       tone: 'cyan',
+    },
+    {
+      id: 'toggle_infinite_match',
+      slash: '/infinita',
+      label: state.infiniteMatch ? 'Partida Infinita: ON' : 'Partida Infinita',
+      description: 'La partida nunca se acaba por tiempo ni por bajas',
+      icon: <InfinityIcon className="h-4 w-4" />,
+      active: Boolean(state.infiniteMatch),
+      tone: 'amber',
     },
     {
       id: 'toggle_infinite_energy',
@@ -455,6 +486,13 @@ export function CdmCommandModal({
     if (!trimmed) return;
     onExecuteCommand('owner_announce', trimmed);
     setAnnounceText('');
+  };
+
+  const handleGiftAdminSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!effectiveGiftTargetId) return;
+    onExecuteCommand('grant_admin_gift', effectiveGiftTargetId, giftText);
+    setGiftText('');
   };
 
   const menuTabs: { id: CdmMenuTab; label: string; icon: ReactNode }[] = [
@@ -818,16 +856,45 @@ export function CdmCommandModal({
                               className={`rounded px-1 py-0.5 text-[9px] font-bold uppercase shrink-0 ${
                                 p.isBot
                                   ? 'bg-slate-800 text-slate-300'
-                                  : 'bg-cyan-500/20 text-cyan-300'
+                                  : p.isOwner
+                                    ? 'bg-amber-500/20 text-amber-300'
+                                    : p.isAdmin
+                                      ? 'bg-emerald-500/20 text-emerald-300'
+                                      : 'bg-cyan-500/20 text-cyan-300'
                               }`}
                             >
-                              {p.isBot ? 'BOT' : 'JUGADOR'}
+                              {p.isBot ? 'BOT' : p.isOwner ? 'DUEÑO' : p.isAdmin ? 'ADMIN' : 'JUGADOR'}
                             </span>
                           </div>
                           <span className="font-mono-tab block text-[10px] text-slate-400 truncate">
                             ID: {p.id}
                           </span>
                         </div>
+                        {me?.isOwner && !p.isBot && !p.isOwner && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onExecuteCommand(
+                                p.isAdmin ? 'revoke_admin' : 'grant_admin_gift',
+                                p.id,
+                                p.isAdmin ? undefined : giftText,
+                              )
+                            }
+                            title={
+                              p.isAdmin
+                                ? `Quitar comandos de admin a ${p.name}`
+                                : `Regalar comandos de admin a ${p.name}`
+                            }
+                            className={`flex min-h-[34px] shrink-0 items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-bold cursor-pointer ${
+                              p.isAdmin
+                                ? 'border-slate-600 bg-slate-800 text-slate-200 hover:border-rose-400 hover:text-rose-200'
+                                : 'border-amber-400/50 bg-amber-500/20 text-amber-200 hover:bg-amber-400 hover:text-slate-950'
+                            }`}
+                          >
+                            <Gift className="h-3 w-3" />
+                            {p.isAdmin ? 'Quitar' : 'Admin'}
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => onExecuteCommand('tp_to_player', p.id)}
@@ -837,14 +904,16 @@ export function CdmCommandModal({
                           <Navigation className="h-3 w-3" />
                           TP
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => onExecuteCommand('admin_ban', p.id)}
-                          className="flex min-h-[34px] shrink-0 items-center gap-1 rounded-lg border border-rose-500/50 bg-rose-500/20 px-2 py-1 text-[11px] font-bold text-rose-200 hover:bg-rose-500 hover:text-white cursor-pointer"
-                        >
-                          <Ban className="h-3 w-3" />
-                          Ban
-                        </button>
+                        {!p.isOwner && (
+                          <button
+                            type="button"
+                            onClick={() => onExecuteCommand('admin_ban', p.id)}
+                            className="flex min-h-[34px] shrink-0 items-center gap-1 rounded-lg border border-rose-500/50 bg-rose-500/20 px-2 py-1 text-[11px] font-bold text-rose-200 hover:bg-rose-500 hover:text-white cursor-pointer"
+                          >
+                            <Ban className="h-3 w-3" />
+                            Ban
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -854,6 +923,68 @@ export function CdmCommandModal({
                   </p>
                 )}
               </div>
+
+              {/* Gift Admin Commands (3-click Gift Modal + Custom Message) */}
+              {me?.isOwner && (
+                <div className="rounded-xl border border-amber-400/40 bg-amber-950/15 p-2.5">
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <Gift className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                      <h3 className="font-display text-[11px] font-bold uppercase tracking-wider text-amber-200 truncate">
+                        Regalar Comandos de Admin
+                      </h3>
+                    </div>
+                    <span className="rounded bg-slate-950/90 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 shrink-0">
+                      Regalo 3 clics
+                    </span>
+                  </div>
+                  <p className="mb-2 text-[11px] text-slate-300 leading-snug">
+                    Elige a alguien del servidor: le saldrá una caja regalo de 3 clics con sus comandos de admin y tu texto debajo.
+                  </p>
+
+                  {serverHumanTargets.length > 0 ? (
+                    <form onSubmit={handleGiftAdminSubmit} className="space-y-2">
+                      <select
+                        value={effectiveGiftTargetId}
+                        onChange={(e) => setGiftTargetId(e.target.value)}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        aria-label="Elegir jugador del servidor para regalar admin"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white focus:border-amber-400 focus:outline-none"
+                      >
+                        {serverHumanTargets.map((target) => (
+                          <option key={target.id} value={target.id}>
+                            {target.name} · Sala {target.roomCode}
+                            {target.isAdmin ? ' (Ya es Admin)' : ''}
+                          </option>
+                        ))}
+                      </select>
+
+                      <input
+                        type="text"
+                        value={giftText}
+                        onChange={(e) => setGiftText(e.target.value)}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        maxLength={140}
+                        placeholder="Texto debajo del regalo (ej. ¡Diviértete como admin!)"
+                        aria-label="Texto personalizado del regalo"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+                      />
+
+                      <button
+                        type="submit"
+                        className="flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-lg bg-amber-400 px-3 py-1.5 font-display text-xs font-bold text-slate-950 hover:bg-amber-300 cursor-pointer"
+                      >
+                        <Gift className="h-3.5 w-3.5" />
+                        <span>Mandar Regalo de Admin</span>
+                      </button>
+                    </form>
+                  ) : (
+                    <p className="text-[11px] text-slate-400">
+                      No hay otros jugadores humanos conectados en el servidor ahora mismo.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Banned Players List & Unban Search */}
               <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/15 p-2.5">

@@ -83,6 +83,7 @@ import type {
   PlayerSnapshot,
   PublicRoomSummary,
   RoomPreset,
+  ServerAdminPlayerSummary,
   ServerStatePayload,
   ServerToClientMessage,
   TeamId,
@@ -280,6 +281,8 @@ const BOT_PROFILES: Array<{
 interface ServerPlayer extends PlayerSnapshot {
   baseAccentColor: string;
   isAdmin: boolean;
+  isOwner: boolean;
+  giftedAdmin: boolean;
   infiniteCoins: boolean;
   savedCoinsBeforeInfinite: number;
   matchWeaponOverride: WeaponId | null;
@@ -339,6 +342,7 @@ interface GameRoom {
   hasExplicitMap: boolean;
   allowedWeapons: WeaponId[];
   infiniteEnergy: boolean;
+  infiniteMatch: boolean;
   darkHideAndSeek: boolean;
   lowGravityUntil: number;
   turboArenaUntil: number;
@@ -896,6 +900,7 @@ function getStatePayload(room: GameRoom): ServerStatePayload {
     botsEnabled: room.botsEnabled,
     allowedWeapons: [...room.allowedWeapons],
     infiniteEnergy: room.infiniteEnergy,
+    infiniteMatch: room.infiniteMatch,
     darkHideAndSeek: room.darkHideAndSeek || room.blackoutUntil > now,
     lowGravityUntil: room.lowGravityUntil,
     turboArenaUntil: room.turboArenaUntil,
@@ -936,6 +941,7 @@ function getStatePayload(room: GameRoom): ServerStatePayload {
         country: p.country,
         isBot: p.isBot,
         isAdmin: canPlayerUseCdm(p) ? true : undefined,
+        isOwner: p.isOwner ? true : undefined,
         team: p.team,
         accentColor: p.accentColor,
         equippedOutfit: p.equippedOutfit,
@@ -1039,6 +1045,8 @@ function spawnBotsIfNeeded(room: GameRoom) {
       gender: profile.gender,
       isBot: true,
       isAdmin: false,
+      isOwner: false,
+      giftedAdmin: false,
       infiniteCoins: false,
       savedCoinsBeforeInfinite: 0,
       team: botTeam,
@@ -1183,6 +1191,7 @@ function createGameRoom(
     hasExplicitMap: Boolean(options.hasExplicitMap),
     allowedWeapons: sanitizeAllowedWeapons(options.allowedWeapons),
     infiniteEnergy: Boolean(options.infiniteEnergy),
+    infiniteMatch: false,
     darkHideAndSeek: Boolean(options.darkHideAndSeek),
     lowGravityUntil: 0,
     turboArenaUntil: 0,
@@ -1759,7 +1768,7 @@ function handleLaserShot(room: GameRoom, shooter: ServerPlayer, rawOrigin: Vec3,
       };
       sendToRoom(room, { type: 'killfeed', event: kf });
 
-      if (shooter.tags >= getRoomTargetTags(room)) {
+      if (!room.infiniteMatch && shooter.tags >= getRoomTargetTags(room)) {
         transitionToResults(room);
         break;
       }
@@ -1936,7 +1945,7 @@ function handleMeleeSlash(room: GameRoom, attacker: ServerPlayer, rawOrigin: Vec
     };
     sendToRoom(room, { type: 'killfeed', event: kf });
 
-    if (attacker.tags >= getRoomTargetTags(room)) {
+    if (!room.infiniteMatch && attacker.tags >= getRoomTargetTags(room)) {
       transitionToResults(room);
     }
   }
@@ -2309,7 +2318,7 @@ function spawnEventDrops(room: GameRoom, kind: ArenaDropKind, count: number, nea
 }
 
 function canPlayerUseCdm(player: ServerPlayer): boolean {
-  return !player.isBot && player.isAdmin === true;
+  return !player.isBot && (player.isOwner === true || player.isAdmin === true);
 }
 
 interface ParsedCdmCommand {
@@ -2445,9 +2454,30 @@ function parseChatCdmCommand(raw: string): ParsedCdmCommand | null {
     case '/clearannounce':
     case '/quitaranuncio':
       return { command: 'clear_owner_announce' };
+    case '/infinita':
+    case '/infinitematch':
+    case '/partidainfinita':
+      return { command: 'toggle_infinite_match' };
     default:
       return null;
   }
+}
+
+function getConnectedHumanPlayersSummary(): ServerAdminPlayerSummary[] {
+  const list: ServerAdminPlayerSummary[] = [];
+  for (const r of rooms.values()) {
+    for (const p of r.players.values()) {
+      if (p.isBot) continue;
+      list.push({
+        id: p.id,
+        name: p.name,
+        roomCode: r.roomCode,
+        isAdmin: canPlayerUseCdm(p) ? true : undefined,
+        isOwner: p.isOwner ? true : undefined,
+      });
+    }
+  }
+  return list.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function sendCdmStatus(ws: WebSocket, player: ServerPlayer, message: string, ok = true, openPanel?: boolean) {
@@ -2458,6 +2488,7 @@ function sendCdmStatus(ws: WebSocket, player: ServerPlayer, message: string, ok 
     ok,
     message,
     bannedPlayers: getBannedPlayersSnapshot(),
+    serverPlayers: getConnectedHumanPlayersSummary(),
     activePowers: {
       canFly: Boolean(player.canFly),
       speedBoosted: Boolean(player.speedBoosted),
@@ -2627,6 +2658,7 @@ function executeCdmCommand(
   ws: WebSocket,
   command: CdmCommandId,
   targetId?: string,
+  giftMessage?: string,
 ) {
   const now = Date.now();
   let message = 'Comando ejecutado.';
@@ -2716,6 +2748,15 @@ function executeCdmCommand(
     case 'toggle_infinite_energy':
       room.infiniteEnergy = !room.infiniteEnergy;
       message = room.infiniteEnergy ? 'Energía Infinita ACTIVADA en la sala.' : 'Energía Infinita DESACTIVADA.';
+      break;
+    case 'toggle_infinite_match':
+      room.infiniteMatch = !room.infiniteMatch;
+      if (!room.infiniteMatch && room.phase === 'playing') {
+        room.phaseEndsAt = now + MATCH_DURATION_MS;
+      }
+      message = room.infiniteMatch
+        ? 'Partida Infinita ACTIVADA: la partida no terminará por tiempo ni por bajas.'
+        : 'Partida Infinita DESACTIVADA (reglas normales de tiempo y bajas restauradas).';
       break;
     case 'toggle_dark':
       room.darkHideAndSeek = !room.darkHideAndSeek;
@@ -2985,6 +3026,10 @@ function executeCdmCommand(
         sendCdmStatus(ws, player, `No se encontró ningún jugador activo con ID "${cleanTargetId}".`, false);
         return;
       }
+      if (match.targetPlayer.isOwner) {
+        sendCdmStatus(ws, player, 'No puedes expulsar o banear al dueño del servidor.', false);
+        return;
+      }
       kickAndBanPlayer(
         match.targetRoom,
         match.targetPlayer,
@@ -2994,6 +3039,101 @@ function executeCdmCommand(
       message = match.targetPlayer.isBot
         ? `Bot ${match.targetPlayer.name} (${match.targetPlayer.id}) expulsado de la sala.`
         : `Jugador ${match.targetPlayer.name} (${match.targetPlayer.id}) expulsado y baneado.`;
+      break;
+    }
+    case 'grant_admin_gift': {
+      if (!player.isOwner) {
+        sendCdmStatus(ws, player, 'Solo el dueño verificado puede regalar comandos de admin.', false);
+        return;
+      }
+      const cleanQuery = typeof targetId === 'string' ? targetId.trim().slice(0, 64) : '';
+      if (!cleanQuery) {
+        sendCdmStatus(ws, player, 'Elige un jugador conectado del servidor para enviarle el regalo.', false);
+        return;
+      }
+      const match =
+        findActivePlayerById(room, cleanQuery) ??
+        findPlayerAcrossRoomsByQuery(room, cleanQuery, player.id);
+      if (!match) {
+        sendCdmStatus(ws, player, `No se encontró al jugador "${cleanQuery}" en el servidor.`, false);
+        return;
+      }
+      const { targetRoom, targetPlayer } = match;
+      if (targetPlayer.isBot) {
+        sendCdmStatus(ws, player, 'No puedes enviar comandos de admin a un bot.', false);
+        return;
+      }
+      if (targetPlayer.id === player.id) {
+        sendCdmStatus(ws, player, 'Elige a otro jugador del servidor para enviarle el regalo.', false);
+        return;
+      }
+      const cleanGiftNote =
+        typeof giftMessage === 'string'
+          ? giftMessage
+              .replace(/[\r\n\t]+/g, ' ')
+              .replace(/\s{2,}/g, ' ')
+              .trim()
+              .slice(0, 140)
+          : '';
+      const finalGiftNote = cleanGiftNote || '¡Disfruta tus Comandos de Admin en la arena!';
+
+      targetPlayer.giftedAdmin = true;
+      targetPlayer.isAdmin = true;
+
+      const targetWs = sockets.get(targetPlayer.id);
+      if (targetWs) {
+        sendTo(targetWs, {
+          type: 'admin_gift_received',
+          giftId: nextId('gift'),
+          senderName: player.name,
+          message: finalGiftNote,
+        });
+      }
+      sendToRoom(targetRoom, { type: 'state', state: getStatePayload(targetRoom) });
+      message = `Regalo de Comandos de Admin enviado a ${targetPlayer.name} (${targetRoom.roomCode}).`;
+      break;
+    }
+    case 'revoke_admin': {
+      if (!player.isOwner) {
+        sendCdmStatus(ws, player, 'Solo el dueño verificado puede quitar comandos de admin.', false);
+        return;
+      }
+      const cleanTargetId = typeof targetId === 'string' ? targetId.trim().slice(0, 64) : '';
+      if (!cleanTargetId) {
+        sendCdmStatus(ws, player, 'Indica el ID del jugador para quitarle los comandos de admin.', false);
+        return;
+      }
+      const match = findActivePlayerById(room, cleanTargetId);
+      if (!match) {
+        sendCdmStatus(ws, player, `No se encontró ningún jugador activo con ID "${cleanTargetId}".`, false);
+        return;
+      }
+      const { targetRoom, targetPlayer } = match;
+      if (targetPlayer.isOwner) {
+        sendCdmStatus(ws, player, 'No puedes quitar permisos al dueño verificado.', false);
+        return;
+      }
+      targetPlayer.giftedAdmin = false;
+      targetPlayer.isAdmin = false;
+      targetPlayer.canFly = false;
+      targetPlayer.godMode = false;
+      targetPlayer.speedBoosted = false;
+      targetPlayer.infiniteAmmo = false;
+      if (targetPlayer.infiniteCoins) {
+        targetPlayer.infiniteCoins = false;
+        targetPlayer.coins = targetPlayer.savedCoinsBeforeInfinite;
+      }
+      const targetWs = sockets.get(targetPlayer.id);
+      if (targetWs) {
+        sendTo(targetWs, {
+          type: 'cdm_response',
+          authorized: false,
+          ok: false,
+          message: 'Tus comandos de admin temporales fueron retirados.',
+        });
+      }
+      sendToRoom(targetRoom, { type: 'state', state: getStatePayload(targetRoom) });
+      message = `Comandos de admin retirados a ${targetPlayer.name}.`;
       break;
     }
     case 'admin_unban': {
@@ -3073,7 +3213,7 @@ setInterval(() => {
       startVotedMatchDirectly(room);
     } else if (room.phase === 'countdown' && now >= room.phaseEndsAt) {
       transitionToPlaying(room);
-    } else if (room.phase === 'playing' && now >= room.phaseEndsAt) {
+    } else if (room.phase === 'playing' && !room.infiniteMatch && now >= room.phaseEndsAt) {
       transitionToResults(room);
     } else if (room.phase === 'results' && now >= room.phaseEndsAt) {
       transitionToLobby(room);
@@ -3407,6 +3547,77 @@ async function startServer() {
     });
   });
 
+  app.get(['/privacy', '/privacy-policy'], (_req, res) => {
+    res.type('html').send(`<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Política de Privacidad — Apex Laser Tag Arena</title>
+  <style>
+    body{margin:0;background:#080C14;color:#E2E8F0;font-family:system-ui,-apple-system,sans-serif;line-height:1.6;padding:32px 20px}
+    main{max-width:760px;margin:0 auto;background:#0D1422;border:1px solid #1E293B;border-radius:14px;padding:28px}
+    h1,h2{color:#38BDF8;margin-top:0}
+    h2{font-size:1.1rem;margin-top:24px}
+    a{color:#38BDF8}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Política de Privacidad — Apex Laser Tag Arena</h1>
+    <p>Última actualización: noviembre de 2026</p>
+    <p>Apex Laser Tag Arena recopila únicamente la información mínima necesaria para el funcionamiento de las cuentas de jugador, salas multijugador y tabla de líderes.</p>
+    <h2>1. Datos que recopilamos</h2>
+    <ul>
+      <li><strong>Datos de inicio de sesión:</strong> si eliges iniciar sesión con Google, Facebook, GitHub, X o correo electrónico mediante Firebase Authentication, recibimos tu identificador de usuario, nombre visible y dirección de correo electrónico verificada.</li>
+      <li><strong>Progreso del juego:</strong> nombre de agente, país opcional, personaje seleccionado, monedas virtuales, armas, trajes, misiones diarias y puntuaciones de partida almacenadas en Cloud Firestore.</li>
+      <li><strong>Modo invitado:</strong> puedes jugar sin iniciar sesión ni proporcionar datos personales.</li>
+    </ul>
+    <h2>2. Uso de la información</h2>
+    <p>Usamos estos datos exclusivamente para guardar tu progreso entre sesiones, mostrar tu perfil dentro de las partidas y mantener las funciones de amigos e invitaciones a salas privadas. No vendemos ni compartimos tus datos personales con terceros con fines publicitarios.</p>
+    <h2>3. Eliminación de datos y contacto</h2>
+    <p>Puedes solicitar en cualquier momento la eliminación completa de tu cuenta y datos asociados siguiendo las instrucciones en <a href="/data-deletion">/data-deletion</a> o escribiendo a <a href="mailto:fernandezsamuel57617@gmail.com">fernandezsamuel57617@gmail.com</a>.</p>
+  </main>
+</body>
+</html>`);
+  });
+
+  app.get('/data-deletion', (_req, res) => {
+    res.type('html').send(`<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Eliminación de Datos — Apex Laser Tag Arena</title>
+  <style>
+    body{margin:0;background:#080C14;color:#E2E8F0;font-family:system-ui,-apple-system,sans-serif;line-height:1.6;padding:32px 20px}
+    main{max-width:760px;margin:0 auto;background:#0D1422;border:1px solid #1E293B;border-radius:14px;padding:28px}
+    h1,h2{color:#38BDF8;margin-top:0}
+    h2{font-size:1.1rem;margin-top:24px}
+    a{color:#38BDF8}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Eliminación de Datos de Usuario — Apex Laser Tag Arena</h1>
+    <p>Si iniciaste sesión en Apex Laser Tag Arena (con Facebook, Google, GitHub, X o correo electrónico) y deseas eliminar tu cuenta y tu progreso guardado, sigue estos pasos:</p>
+    <h2>Opción 1: Solicitud por correo</h2>
+    <ol>
+      <li>Envía un correo a <a href="mailto:fernandezsamuel57617@gmail.com">fernandezsamuel57617@gmail.com</a> desde la dirección vinculada a tu cuenta (o indicando tu nombre de agente y proveedor usado).</li>
+      <li>Usa el asunto: <strong>Eliminar datos de Apex Laser Tag Arena</strong>.</li>
+      <li>Eliminaremos tu perfil en Cloud Firestore y tu registro de autenticación en un plazo máximo de 7 días hábiles.</li>
+    </ol>
+    <h2>Opción 2: Desvincular acceso de Facebook</h2>
+    <ol>
+      <li>Entra a tu cuenta de Facebook → <strong>Configuración y privacidad</strong> → <strong>Configuración</strong>.</li>
+      <li>Ve a <strong>Apps y sitios web</strong>.</li>
+      <li>Busca <strong>Apex Laser Tag Arena</strong> y haz clic en <strong>Eliminar</strong>.</li>
+    </ol>
+  </main>
+</body>
+</html>`);
+  });
+
   if (!IS_PROD) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
@@ -3550,6 +3761,8 @@ async function startServer() {
           country,
           isBot: false,
           isAdmin: false,
+          isOwner: false,
+          giftedAdmin: false,
           infiniteCoins: false,
           savedCoinsBeforeInfinite: coins,
           team: initialTeam,
@@ -3631,7 +3844,8 @@ async function startServer() {
         if (ws.readyState !== WebSocket.OPEN) {
           return;
         }
-        player.isAdmin = Boolean(verifiedAdmin);
+        player.isOwner = Boolean(verifiedAdmin);
+        player.isAdmin = player.isOwner || player.giftedAdmin;
 
         syncPlayerAmmoToRoomWeapon(targetRoom, player);
         targetRoom.players.set(playerId, player);
@@ -3867,8 +4081,10 @@ async function startServer() {
       if (msg.type === 'auth_refresh') {
         const verifiedAdmin = await verifyFirebaseAdminToken(msg.authIdToken);
         if (ws.readyState !== WebSocket.OPEN) return;
-        const nextIsAdmin = Boolean(verifiedAdmin);
-        if (player.isAdmin !== nextIsAdmin) {
+        const nextIsOwner = Boolean(verifiedAdmin);
+        const nextIsAdmin = nextIsOwner || player.giftedAdmin;
+        if (player.isOwner !== nextIsOwner || player.isAdmin !== nextIsAdmin) {
+          player.isOwner = nextIsOwner;
           player.isAdmin = nextIsAdmin;
           if (!nextIsAdmin) {
             player.canFly = false;
@@ -3887,10 +4103,11 @@ async function startServer() {
 
       if (msg.type === 'cdm_request') {
         const line = String(msg.commandLine || '').trim();
-        if (!canPlayerUseCdm(player) && msg.authIdToken) {
+        if (!player.isOwner && msg.authIdToken) {
           const verifiedAdmin = await verifyFirebaseAdminToken(msg.authIdToken);
           if (ws.readyState !== WebSocket.OPEN) return;
           if (verifiedAdmin) {
+            player.isOwner = true;
             player.isAdmin = true;
             sendToRoom(room, { type: 'state', state: getStatePayload(room) });
           }
@@ -3925,10 +4142,11 @@ async function startServer() {
       }
 
       if (msg.type === 'cdm_execute') {
-        if (!canPlayerUseCdm(player) && msg.authIdToken) {
+        if (!player.isOwner && msg.authIdToken) {
           const verifiedAdmin = await verifyFirebaseAdminToken(msg.authIdToken);
           if (ws.readyState !== WebSocket.OPEN) return;
           if (verifiedAdmin) {
+            player.isOwner = true;
             player.isAdmin = true;
             sendToRoom(room, { type: 'state', state: getStatePayload(room) });
           }
@@ -3942,7 +4160,7 @@ async function startServer() {
           });
           return;
         }
-        executeCdmCommand(room, player, ws, msg.command, msg.targetId);
+        executeCdmCommand(room, player, ws, msg.command, msg.targetId, msg.giftMessage);
         return;
       }
 

@@ -1,6 +1,7 @@
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { soundEngine } from './audio/soundEngine';
+import { AdminGiftModal, type PendingAdminGift } from './components/AdminGiftModal';
 import { CdmCommandModal, type CdmPowersState } from './components/CdmCommandModal';
 import { CharacterSelectScreen } from './components/CharacterSelectScreen';
 import { DailyMissionsModal } from './components/DailyMissionsModal';
@@ -17,6 +18,7 @@ import { TutorialOverlay } from './components/TutorialOverlay';
 import {
   auth,
   claimDailyMissionRewardInProfile,
+  formatFirestoreErrorMessage,
   loadUserProfile,
   refreshCurrentUser,
   registerWithEmailPassword,
@@ -87,6 +89,7 @@ import type {
   MatchMode,
   OwnerAnnouncement,
   PublicRoomSummary,
+  ServerAdminPlayerSummary,
   ServerStatePayload,
   ServerToClientMessage,
   TeamMode,
@@ -147,6 +150,8 @@ export default function App() {
   const [cdmOpen, setCdmOpen] = useState(false);
   const [cdmFeedback, setCdmFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [bannedPlayers, setBannedPlayers] = useState<BannedPlayerRecord[]>([]);
+  const [serverHumanPlayers, setServerHumanPlayers] = useState<ServerAdminPlayerSummary[]>([]);
+  const [pendingAdminGift, setPendingAdminGift] = useState<PendingAdminGift | null>(null);
   const [ownerAnnouncement, setOwnerAnnouncement] = useState<OwnerAnnouncement | null>(null);
   const [ownerAnnouncementLog, setOwnerAnnouncementLog] = useState<OwnerAnnouncement[]>([]);
   const [bannerLogoFailed, setBannerLogoFailed] = useState(false);
@@ -214,8 +219,8 @@ export default function App() {
   }, [authUser]);
 
   useEffect(() => {
-    engineRef.current?.setPointerLockSuppressed(cdmOpen);
-  }, [cdmOpen]);
+    engineRef.current?.setPointerLockSuppressed(cdmOpen || Boolean(pendingAdminGift));
+  }, [cdmOpen, pendingAdminGift]);
 
   useEffect(() => {
     if (!ownerAnnouncement) return;
@@ -284,7 +289,9 @@ export default function App() {
         setSavedProfile(profile);
       } catch (err) {
         console.error('Error loading profile:', err);
-        setAuthError('No se pudo cargar tu perfil guardado de Firebase.');
+        setAuthError(
+          formatFirestoreErrorMessage(err, 'No se pudo cargar tu perfil guardado de Firebase.'),
+        );
       } finally {
         setProfileLoading(false);
         setAuthReady(true);
@@ -513,7 +520,6 @@ export default function App() {
     const labelMap: Record<SocialAuthProviderId, string> = {
       google: 'Google',
       github: 'GitHub',
-      microsoft: 'Microsoft',
       facebook: 'Facebook',
       twitter: 'X (Twitter)',
     };
@@ -646,16 +652,24 @@ export default function App() {
       setRoomError(null);
 
       let activeProfile = savedProfileRef.current;
+      const currentAuthUser = authUser ?? authUserRef.current;
 
-      if (authUser && authUser.emailVerified && !activeProfile) {
+      if (currentAuthUser && currentAuthUser.emailVerified && !activeProfile) {
         setSavingProfile(true);
         try {
-          const updated = await saveUserProfile(authUser.uid, cleanName, gender, cleanCountry);
+          const updated = await saveUserProfile(
+            currentAuthUser.uid,
+            cleanName,
+            gender,
+            cleanCountry,
+          );
           setSavedProfile(updated);
           activeProfile = updated;
         } catch (err) {
           console.error('Failed to save user profile:', err);
-          setAuthError('No se pudo guardar tu perfil en Firestore.');
+          setAuthError(
+            formatFirestoreErrorMessage(err, 'No se pudo guardar tu perfil en Firestore.'),
+          );
           setSavingProfile(false);
           return;
         }
@@ -665,7 +679,6 @@ export default function App() {
       setConnecting(true);
 
       let authIdToken: string | undefined;
-      const currentAuthUser = authUser ?? authUserRef.current;
       if (currentAuthUser && currentAuthUser.emailVerified) {
         try {
           authIdToken = await currentAuthUser.getIdToken();
@@ -889,6 +902,9 @@ export default function App() {
             if (Array.isArray(msg.bannedPlayers)) {
               setBannedPlayers(msg.bannedPlayers);
             }
+            if (Array.isArray(msg.serverPlayers)) {
+              setServerHumanPlayers(msg.serverPlayers);
+            }
             if (msg.activePowers) {
               setCdmPowers({
                 canFly: Boolean(msg.activePowers.canFly),
@@ -918,6 +934,14 @@ export default function App() {
             });
             setChatBlockedReason(deniedMsg);
           }
+        } else if (msg.type === 'admin_gift_received') {
+          engineRef.current?.exitPointerLock();
+          soundEngine.playBoostPickup();
+          setPendingAdminGift({
+            giftId: msg.giftId,
+            senderName: msg.senderName,
+            message: msg.message,
+          });
         } else if (msg.type === 'report_ack') {
           if (msg.accepted) {
             setReportedIds((prev) => ({ ...prev, [msg.targetId]: true }));
@@ -961,6 +985,8 @@ export default function App() {
         voiceManagerRef.current?.leaveRoom();
         setPingMs(null);
         setCdmOpen(false);
+        setPendingAdminGift(null);
+        setServerHumanPlayers([]);
         setOwnerAnnouncement(null);
         myIdRef.current = null;
         setMyId(null);
@@ -1597,8 +1623,8 @@ export default function App() {
   }, [cdmOpen, sendWs, serverState?.players]);
 
   const handleExecuteCdmCommand = useCallback(
-    (command: CdmCommandId, targetId?: string) => {
-      sendWs({ type: 'cdm_execute', command, targetId });
+    (command: CdmCommandId, targetId?: string, giftMessage?: string) => {
+      sendWs({ type: 'cdm_execute', command, targetId, giftMessage });
     },
     [sendWs],
   );
@@ -2133,12 +2159,21 @@ export default function App() {
             powers={cdmPowers}
             feedback={cdmFeedback}
             bannedPlayers={bannedPlayers}
+            serverPlayers={serverHumanPlayers}
             activeAnnouncement={ownerAnnouncement}
             announcementLog={ownerAnnouncementLog}
             onExecuteCommand={handleExecuteCdmCommand}
             onSubmitCommandLine={handleSubmitCdmCommandLine}
           />
         )}
+        <AdminGiftModal
+          gift={pendingAdminGift}
+          onClose={() => setPendingAdminGift(null)}
+          onOpenCdm={() => {
+            setPendingAdminGift(null);
+            sendWs({ type: 'cdm_request', commandLine: 'cdm' });
+          }}
+        />
         <OfflineIndicator />
       </div>
     </ErrorBoundary>

@@ -168,13 +168,86 @@
   animation: damageFloatPop 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@keyframes giftFloat {
+  0%, 100% {
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    transform: translateY(-8px) scale(1.02);
+  }
+}
+
+@keyframes giftShake {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  20% {
+    transform: rotate(-7deg) scale(1.07);
+  }
+  45% {
+    transform: rotate(7deg) scale(1.1);
+  }
+  70% {
+    transform: rotate(-4deg) scale(1.05);
+  }
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes giftPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.76) translateY(14px);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1.04) translateY(-2px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes giftConfettiBurst {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(0.7) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--tx, 0px), var(--ty, -80px)) scale(1.15) rotate(var(--rot, 140deg));
+  }
+}
+
+.animate-gift-float {
+  animation: giftFloat 2.4s ease-in-out infinite;
+}
+
+.animate-gift-shake {
+  animation: giftShake 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-gift-pop {
+  animation: giftPop 0.48s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-gift-confetti {
+  animation: giftConfettiBurst 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-ff-slam,
   .animate-ff-shockwave-cyan,
   .animate-ff-shockwave-amber,
   .animate-ff-sweep,
   .animate-ff-fadeup,
-  .animate-damage-float {
+  .animate-damage-float,
+  .animate-gift-float,
+  .animate-gift-shake,
+  .animate-gift-pop,
+  .animate-gift-confetti {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;
