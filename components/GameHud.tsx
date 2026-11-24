@@ -724,8 +724,12 @@ export function GameHud({
           {state.phase === 'playing' && (
             <div className="pointer-events-none flex flex-col items-center gap-1 shrink-0">
               <div className="flex flex-col items-center rounded-xl border border-slate-700/80 bg-[#0B101B]/90 px-3 py-1 text-center">
-                <div className="font-mono-tab text-sm font-bold leading-tight text-white">
-                  {formatClock(timeLeftMs)}
+                <div
+                  className={`font-mono-tab text-sm font-bold leading-tight ${
+                    state.infiniteMatch ? 'text-amber-300' : 'text-white'
+                  }`}
+                >
+                  {state.infiniteMatch ? '∞ INFINITA' : formatClock(timeLeftMs)}
                 </div>
                 {state.teamMode === 'teams' ? (
                   <div className="flex items-center gap-1.5 text-[10px] font-bold leading-tight">
@@ -735,7 +739,10 @@ export function GameHud({
                   </div>
                 ) : topPlayer ? (
                   <div className="text-[10px] font-semibold text-amber-300 leading-tight max-w-[110px] truncate">
-                    {topPlayer.name} {topPlayer.tags}/{state.targetScoreTags}
+                    {topPlayer.name}{' '}
+                    {state.infiniteMatch
+                      ? `${topPlayer.tags} ★`
+                      : `${topPlayer.tags}/${state.targetScoreTags}`}
                   </div>
                 ) : null}
               </div>
@@ -1052,7 +1059,9 @@ export function GameHud({
                       {topPlayer.name}
                     </span>
                     <span className="font-mono-tab text-xs font-semibold text-slate-200">
-                      {topPlayer.tags}/{state.targetScoreTags} tags
+                      {state.infiniteMatch
+                        ? `${topPlayer.tags} tags`
+                        : `${topPlayer.tags}/${state.targetScoreTags} tags`}
                     </span>
                   </div>
                 ) : (
@@ -1117,6 +1126,11 @@ export function GameHud({
               {state.darkHideAndSeek && (
                 <span className="rounded border border-indigo-400/50 bg-indigo-500/20 px-1.5 py-0.2 font-bold text-indigo-200">
                   ESCONDITE OSCURO
+                </span>
+              )}
+              {state.infiniteMatch && (
+                <span className="rounded border border-amber-400/55 bg-amber-500/20 px-1.5 py-0.2 font-bold text-amber-300">
+                  PARTIDA ∞
                 </span>
               )}
               {state.infiniteEnergy && (
@@ -1190,8 +1204,12 @@ export function GameHud({
                 </span>
               )}
             </div>
-            <div className="font-mono-tab text-2xl font-bold text-white tracking-wider">
-              {formatClock(timeLeftMs)}
+            <div
+              className={`font-mono-tab text-2xl font-bold tracking-wider ${
+                state.infiniteMatch ? 'text-amber-300' : 'text-white'
+              }`}
+            >
+              {state.infiniteMatch ? '∞ INFINITA' : formatClock(timeLeftMs)}
             </div>
             {state.teamMode === 'teams' && (
               <div className="mt-1 flex items-center justify-center gap-3 border-t border-slate-800 pt-1 text-xs font-bold">

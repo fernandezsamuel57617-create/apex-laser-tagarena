@@ -3,7 +3,6 @@ import {
   FacebookAuthProvider,
   GithubAuthProvider,
   GoogleAuthProvider,
-  OAuthProvider,
   TwitterAuthProvider,
   createUserWithEmailAndPassword,
   getAuth,
@@ -76,17 +75,12 @@ googleProvider.setCustomParameters({
 export const githubProvider = new GithubAuthProvider();
 githubProvider.addScope('user:email');
 
-export const microsoftProvider = new OAuthProvider('microsoft.com');
-microsoftProvider.setCustomParameters({
-  prompt: 'select_account',
-});
-
 export const facebookProvider = new FacebookAuthProvider();
 facebookProvider.addScope('email');
 
 export const twitterProvider = new TwitterAuthProvider();
 
-export type SocialAuthProviderId = 'google' | 'github' | 'microsoft' | 'facebook' | 'twitter';
+export type SocialAuthProviderId = 'google' | 'github' | 'facebook' | 'twitter';
 
 export enum OperationType {
   CREATE = 'create',
@@ -138,6 +132,61 @@ export function handleFirestoreError(
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
+}
+
+export function formatFirestoreErrorMessage(error: unknown, fallback: string): string {
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+  let inner = raw;
+  let op = '';
+  let verifiedTag = '';
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: unknown;
+      operationType?: unknown;
+      authInfo?: { emailVerified?: unknown; providerInfo?: { providerId?: unknown }[] };
+    };
+    if (typeof parsed?.error === 'string' && parsed.error.trim()) {
+      inner = parsed.error;
+    }
+    if (typeof parsed?.operationType === 'string' && parsed.operationType) {
+      op = parsed.operationType;
+    }
+    if (parsed?.authInfo) {
+      const ev = parsed.authInfo.emailVerified;
+      const prov = Array.isArray(parsed.authInfo.providerInfo)
+        ? parsed.authInfo.providerInfo
+            .map((p) => (typeof p?.providerId === 'string' ? p.providerId : ''))
+            .filter(Boolean)
+            .join(',')
+        : '';
+      verifiedTag = ` · verificado: ${String(ev)}${prov ? ` · ${prov}` : ''}`;
+    }
+  } catch {
+    // raw is already a plain error message
+  }
+  const lower = inner.toLowerCase();
+  if (lower.includes('quota exceeded') || lower.includes('resource-exhausted')) {
+    return 'Se alcanzó el límite diario gratuito de Firestore (Quota exceeded). Intenta más tarde.';
+  }
+  if (
+    lower.includes('permission-denied') ||
+    lower.includes('missing or insufficient permissions')
+  ) {
+    const opLabel = op ? ` en "${op}"` : '';
+    return `${fallback} (permisos insuficientes${opLabel}${verifiedTag}).`;
+  }
+  if (
+    lower.includes('client is offline') ||
+    lower.includes('unavailable') ||
+    lower.includes('network')
+  ) {
+    return `${fallback} (sin conexión con Firestore; revisa tu internet).`;
+  }
+  if (lower.includes('unauthenticated')) {
+    return `${fallback} (la sesión expiró; vuelve a iniciar sesión).`;
+  }
+  const cleanDetail = inner.trim().slice(0, 140);
+  return cleanDetail ? `${fallback} (${cleanDetail})` : fallback;
 }
 
 async function testConnection() {
@@ -273,8 +322,6 @@ export async function signInWithSocialProvider(
       return signInWithPopup(auth, googleProvider);
     case 'github':
       return signInWithPopup(auth, githubProvider);
-    case 'microsoft':
-      return signInWithPopup(auth, microsoftProvider);
     case 'facebook':
       return signInWithPopup(auth, facebookProvider);
     case 'twitter':
@@ -311,6 +358,9 @@ export async function resendVerificationEmail(): Promise<void> {
 export async function refreshCurrentUser(): Promise<boolean> {
   if (!auth.currentUser) return false;
   await reload(auth.currentUser);
+  if (auth.currentUser.emailVerified) {
+    await auth.currentUser.getIdToken(true).catch(() => {});
+  }
   return Boolean(auth.currentUser?.emailVerified);
 }
 
@@ -440,6 +490,10 @@ export async function saveUserProfile(
   const path = `userProfiles/${uid}`;
   const docRef = doc(db, 'userProfiles', uid);
 
+  if (auth.currentUser && auth.currentUser.uid === uid) {
+    await auth.currentUser.getIdToken(true).catch(() => {});
+  }
+
   let existingData: Record<string, unknown> | null = null;
   try {
     const existingSnap = await getDoc(docRef);
@@ -449,43 +503,47 @@ export async function saveUserProfile(
   }
 
   if (existingData) {
-    const hasWallet = typeof existingData.coins === 'number';
-    const resolvedCountry =
-      cleanCountry ??
-      (typeof existingData.country === 'string' && /^[A-Z]{2}$/.test(existingData.country)
-        ? existingData.country
-        : undefined);
-    try {
-      if (hasWallet) {
-        await updateDoc(docRef, {
-          playerName: cleanName,
-          gender: cleanGender,
-          ...(resolvedCountry ? { country: resolvedCountry } : {}),
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        await updateDoc(docRef, {
-          playerName: cleanName,
-          gender: cleanGender,
-          ...(resolvedCountry ? { country: resolvedCountry } : {}),
-          coins: 0,
-          rankedWins: 0,
-          ownedOutfits: ['default'],
-          equippedOutfit: 'default',
-          outfitLevels: { default: 1 },
-          ownedWeapons: ['pulse_carbine', 'tactical_pistol'],
-          equippedWeapon: 'pulse_carbine',
-          equippedSidearm: 'tactical_pistol',
-          ownedKnives: ['tactical_blade'],
-          equippedKnife: 'tactical_blade',
-          ownedWeaponSkins: ['default'],
-          equippedWeaponSkin: 'default',
-          updatedAt: serverTimestamp(),
-        });
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
+    const allowedProfileKeys = new Set([
+      'uid',
+      'playerName',
+      'gender',
+      'country',
+      'coins',
+      'rankedWins',
+      'ownedOutfits',
+      'equippedOutfit',
+      'outfitLevels',
+      'ownedWeapons',
+      'equippedWeapon',
+      'equippedSidearm',
+      'ownedKnives',
+      'equippedKnife',
+      'ownedWeaponSkins',
+      'equippedWeaponSkin',
+      'onlineStatus',
+      'currentRoomCode',
+      'dailyMissionsDate',
+      'dailyElims',
+      'dailyWins',
+      'dailyMatches',
+      'dailyBestStreak',
+      'dailyClaimedIds',
+      'lastSeenAt',
+      'createdAt',
+      'updatedAt',
+    ]);
+    const hasExtraKeys = Object.keys(existingData).some((k) => !allowedProfileKeys.has(k));
+    const hasValidCreatedAt =
+      existingData.createdAt instanceof Timestamp ||
+      (Boolean(existingData.createdAt) &&
+        typeof (existingData.createdAt as { toMillis?: unknown }).toMillis === 'function');
+    const hasValidOwnedWeapons =
+      Array.isArray(existingData.ownedWeapons) &&
+      existingData.ownedWeapons.length > 0 &&
+      existingData.ownedWeapons.includes('tactical_pistol');
+    const hasInvalidCountryField =
+      'country' in existingData &&
+      !(typeof existingData.country === 'string' && /^[A-Z]{2}$/.test(existingData.country));
 
     const ownedOutfits = sanitizeOwnedOutfits(existingData.ownedOutfits);
     const equippedOutfit: OutfitId =
@@ -523,6 +581,69 @@ export async function saveUserProfile(
       typeof existingData.rankedWins === 'number' && Number.isInteger(existingData.rankedWins)
         ? Math.max(0, Math.min(10_000, existingData.rankedWins))
         : 0;
+    const resolvedCountry =
+      cleanCountry ??
+      (typeof existingData.country === 'string' && /^[A-Z]{2}$/.test(existingData.country)
+        ? existingData.country
+        : undefined);
+    const dailyMissions = extractDailyMissions(existingData);
+
+    const needsSchemaRepair =
+      hasExtraKeys ||
+      !hasValidCreatedAt ||
+      typeof existingData.coins !== 'number' ||
+      !Number.isInteger(existingData.coins) ||
+      !Array.isArray(existingData.ownedOutfits) ||
+      !existingData.outfitLevels ||
+      typeof existingData.outfitLevels !== 'object' ||
+      !hasValidOwnedWeapons ||
+      !isSidearmWeapon(existingData.equippedSidearm as string) ||
+      !Array.isArray(existingData.ownedKnives) ||
+      !Array.isArray(existingData.ownedWeaponSkins) ||
+      hasInvalidCountryField;
+
+    try {
+      if (needsSchemaRepair) {
+        await setDoc(docRef, {
+          uid,
+          playerName: cleanName,
+          gender: cleanGender,
+          ...(resolvedCountry ? { country: resolvedCountry } : {}),
+          coins,
+          rankedWins,
+          ownedOutfits,
+          equippedOutfit,
+          outfitLevels,
+          ownedWeapons,
+          equippedWeapon,
+          equippedSidearm,
+          ownedKnives,
+          equippedKnife,
+          ownedWeaponSkins,
+          equippedWeaponSkin,
+          dailyMissionsDate: dailyMissions.dateKey,
+          dailyElims: dailyMissions.elims,
+          dailyWins: dailyMissions.wins,
+          dailyMatches: dailyMissions.matches,
+          dailyBestStreak: dailyMissions.bestStreak,
+          dailyClaimedIds: dailyMissions.claimedIds,
+          onlineStatus: 'online',
+          currentRoomCode: 'PUBLIC',
+          lastSeenAt: serverTimestamp(),
+          createdAt: hasValidCreatedAt ? existingData.createdAt : serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(docRef, {
+          playerName: cleanName,
+          gender: cleanGender,
+          ...(resolvedCountry ? { country: resolvedCountry } : {}),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
 
     return {
       uid,
@@ -541,7 +662,7 @@ export async function saveUserProfile(
       equippedKnife,
       ownedWeaponSkins,
       equippedWeaponSkin,
-      dailyMissions: extractDailyMissions(existingData),
+      dailyMissions,
     };
   }
 
