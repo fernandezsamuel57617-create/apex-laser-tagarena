@@ -358,6 +358,9 @@ export async function resendVerificationEmail(): Promise<void> {
 export async function refreshCurrentUser(): Promise<boolean> {
   if (!auth.currentUser) return false;
   await reload(auth.currentUser);
+  if (auth.currentUser.emailVerified) {
+    await auth.currentUser.getIdToken(true).catch(() => {});
+  }
   return Boolean(auth.currentUser?.emailVerified);
 }
 
